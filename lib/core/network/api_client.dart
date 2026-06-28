@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -64,11 +63,7 @@ class ApiClient {
       ..headers.addAll(headers)
       ..fields.addAll(fields);
     if (filePath != null) {
-      final bytes = await File(filePath).readAsBytes();
-      final filename = filePath.split('/').last;
-      request.files.add(
-        http.MultipartFile.fromBytes(fileField, bytes, filename: filename),
-      );
+      request.files.add(await http.MultipartFile.fromPath(fileField, filePath));
     }
     _logRequest('POST(multipart)', uri, fields);
     try {
@@ -77,9 +72,12 @@ class ApiClient {
       _logResponse('POST(multipart)', uri, response);
       return _decode(response);
     } on TimeoutException {
+      _logFailure('POST(multipart)', uri, 'timeout after ${_timeout.inSeconds}s');
       throw const ApiException('The request took too long. Check your connection.');
-    } on http.ClientException {
-      throw const ApiException('Unable to reach the server. Check your connection.');
+    } catch (e) {
+      _logFailure('POST(multipart)', uri, '$e');
+      if (e is ApiException) rethrow;
+      throw ApiException('Upload failed: $e');
     }
   }
 

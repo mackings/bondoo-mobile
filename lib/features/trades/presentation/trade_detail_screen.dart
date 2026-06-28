@@ -1050,6 +1050,11 @@ class _BankCard extends StatelessWidget {
   const _BankCard({required this.account});
   final Map account;
 
+  String _val(dynamic v) {
+    final s = '$v';
+    return (s == 'null' || s.trim().isEmpty) ? '' : s.trim();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -1061,11 +1066,24 @@ class _BankCard extends StatelessWidget {
         border: Border.all(color: AppTheme.border),
       ),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _BankRow('Bank', '${account['bank_name']}'),
-          _BankRow('Account Name', '${account['account_name']}'),
-          _BankRow('Account Number', '${account['account_number']}', copyable: true),
-          _BankRow('Currency', '${account['currency']}'),
+          if (_val(account['bank_name']).isNotEmpty)
+            _BankRow('Bank', _val(account['bank_name'])),
+          if (_val(account['account_name']).isNotEmpty)
+            _BankRow('Account Name', _val(account['account_name'])),
+          if (_val(account['account_number']).isNotEmpty)
+            _BankRow('Account Number', _val(account['account_number']), copyable: true)
+          else
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 4),
+              child: Text(
+                'Account number not set — seller must update their profile.',
+                style: TextStyle(color: Colors.orange, fontSize: 12),
+              ),
+            ),
+          if (_val(account['currency']).isNotEmpty)
+            _BankRow('Currency', _val(account['currency'])),
         ],
       ),
     );

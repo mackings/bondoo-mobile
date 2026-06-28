@@ -426,10 +426,18 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                         InfoBanner(
                           icon: Icons.account_balance_rounded,
                           title:
-                              '${bankAccounts.first['bank_name']} · ${bankAccounts.first['currency']}',
-                          message:
-                              '${bankAccounts.first['account_name']} · ${bankAccounts.first['account_number']}',
-                          color: AppTheme.accent,
+                              '${bankAccounts.first['bank_name'] ?? ''} · ${bankAccounts.first['currency'] ?? ''}',
+                          message: [
+                            if ((bankAccounts.first['account_name'] ?? '').toString().isNotEmpty)
+                              bankAccounts.first['account_name'],
+                            if ((bankAccounts.first['account_number'] ?? '').toString().isNotEmpty)
+                              bankAccounts.first['account_number']
+                            else
+                              '⚠ Account number missing — fill in below',
+                          ].join(' · '),
+                          color: (bankAccounts.first['account_number'] ?? '').toString().isEmpty
+                              ? AppTheme.warning
+                              : AppTheme.accent,
                         ),
                         const SizedBox(height: 14),
                       ],

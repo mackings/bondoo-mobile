@@ -92,8 +92,8 @@ class _StartTradeScreenState extends ConsumerState<StartTradeScreen> {
     final user = offer['user'] as Map?;
     final crypto = cryptoAmount;
 
-    // Estimate fees from cached offer data for preview (live quote comes after create)
-    final estimatedPlatformFeeRate = 0.01; // 1% default
+    // Preview estimate — actual fee is quoted server-side at trade creation
+    const estimatedPlatformFeeRate = 0.01;
     final estPlatformFee = crypto * estimatedPlatformFeeRate;
     final estPayout = crypto - estPlatformFee;
 
@@ -341,7 +341,7 @@ class _FeeBreakdownCard extends StatelessWidget {
           ),
           const Divider(height: 16, color: AppTheme.backgroundSoft),
           _Row(
-            label: 'Platform fee (~1%)',
+            label: 'Platform fee (estimate)',
             value: '- ${_fmt(estPlatformFee)} $coin',
             valueColor: Colors.orange,
           ),

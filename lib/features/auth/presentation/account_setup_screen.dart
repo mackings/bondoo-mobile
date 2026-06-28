@@ -140,112 +140,47 @@ class _RequiredAccountSetupScreenState
     extends ConsumerState<RequiredAccountSetupScreen> {
   final _formKey = GlobalKey<FormState>();
   final _accountNumberCtrl = TextEditingController();
+  final _accountNameCtrl = TextEditingController();
   final _walletProviderCtrl = TextEditingController();
   final _walletAddressCtrl = TextEditingController();
-  final _bankSearchCtrl = TextEditingController();
 
   String _currency = 'NGN';
   String _asset = 'BTC';
 
-  // Bank state
   List<BankInfo> _banks = [];
-  List<BankInfo> _filteredBanks = [];
   BankInfo? _selectedBank;
   bool _loadingBanks = false;
-
-  // Verification state
-  VerifiedAccount? _verified;
-  bool _verifying = false;
-  String? _verifyError;
-
   bool _busy = false;
+
+  bool get _accountFilled =>
+      _selectedBank != null &&
+      _accountNumberCtrl.text.trim().length >= 6 &&
+      _accountNameCtrl.text.trim().length >= 2;
 
   @override
   void initState() {
     super.initState();
     _loadBanks();
-    _accountNumberCtrl.addListener(_onAccountNumberChanged);
-    _bankSearchCtrl.addListener(_onBankSearch);
+    _accountNumberCtrl.addListener(() => setState(() {}));
+    _accountNameCtrl.addListener(() => setState(() {}));
   }
 
   @override
   void dispose() {
     _accountNumberCtrl.dispose();
+    _accountNameCtrl.dispose();
     _walletProviderCtrl.dispose();
     _walletAddressCtrl.dispose();
-    _bankSearchCtrl.dispose();
     super.dispose();
   }
 
   Future<void> _loadBanks() async {
     setState(() => _loadingBanks = true);
     try {
-      final banks =
-          await ref.read(bankRepositoryProvider).fetchBanks(_currency);
-      if (mounted) {
-        setState(() {
-          _banks = banks;
-          _filteredBanks = banks;
-          _loadingBanks = false;
-        });
-      }
+      final banks = await ref.read(bankRepositoryProvider).fetchBanks(_currency);
+      if (mounted) setState(() { _banks = banks; _loadingBanks = false; });
     } catch (_) {
       if (mounted) setState(() => _loadingBanks = false);
-    }
-  }
-
-  void _onBankSearch() {
-    final q = _bankSearchCtrl.text.toLowerCase();
-    setState(() {
-      _filteredBanks = q.isEmpty
-          ? _banks
-          : _banks
-              .where((b) => b.name.toLowerCase().contains(q))
-              .toList();
-    });
-  }
-
-  void _onAccountNumberChanged() {
-    // Clear any previous verification when account number changes
-    if (_verified != null || _verifyError != null) {
-      setState(() {
-        _verified = null;
-        _verifyError = null;
-      });
-    }
-    // Auto-trigger verification when 10 digits entered and bank selected
-    final number = _accountNumberCtrl.text.trim();
-    if (number.length == 10 && _selectedBank != null) {
-      _verifyAccount();
-    }
-  }
-
-  Future<void> _verifyAccount() async {
-    final number = _accountNumberCtrl.text.trim();
-    if (number.length < 6 || _selectedBank == null) return;
-    setState(() {
-      _verifying = true;
-      _verifyError = null;
-      _verified = null;
-    });
-    try {
-      final result = await ref.read(bankRepositoryProvider).verifyAccount(
-            accountNumber: number,
-            bankCode: _selectedBank!.code,
-          );
-      if (mounted) {
-        setState(() {
-          _verified = result;
-          _verifying = false;
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _verifyError = e.toString().replaceAll('Exception: ', '');
-          _verifying = false;
-        });
-      }
     }
   }
 
@@ -257,25 +192,9 @@ class _RequiredAccountSetupScreenState
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (_) => _BankPickerSheet(
-        banks: _banks,
-        searchCtrl: _bankSearchCtrl,
-        filteredBanks: _filteredBanks,
-        onFilter: _onBankSearch,
-      ),
+      builder: (_) => _BankPickerSheet(banks: _banks),
     );
-    if (picked != null && mounted) {
-      setState(() {
-        _selectedBank = picked;
-        _verified = null;
-        _verifyError = null;
-        _bankSearchCtrl.clear();
-        _filteredBanks = _banks;
-      });
-      // Auto-verify if account number already entered
-      final number = _accountNumberCtrl.text.trim();
-      if (number.length >= 10) _verifyAccount();
-    }
+    if (picked != null && mounted) setState(() => _selectedBank = picked);
   }
 
   Future<void> _save() async {
@@ -284,16 +203,12 @@ class _RequiredAccountSetupScreenState
       showApiError(context, Exception('Please select a bank'), title: 'Bank required');
       return;
     }
-    if (_verified == null) {
-      showApiError(context, Exception('Please verify your account number first'), title: 'Verification required');
-      return;
-    }
     setState(() => _busy = true);
     try {
       await ref.read(profileRepositoryProvider).saveBankAccount(
             bankName: _selectedBank!.name,
-            accountName: _verified!.accountName,
-            accountNumber: _verified!.accountNumber,
+            accountName: _accountNameCtrl.text.trim(),
+            accountNumber: _accountNumberCtrl.text.trim(),
             currency: _currency,
           );
       final user = await ref.read(profileRepositoryProvider).linkWallet(
@@ -342,8 +257,6 @@ class _RequiredAccountSetupScreenState
                 setState(() {
                   _currency = v ?? _currency;
                   _selectedBank = null;
-                  _verified = null;
-                  _verifyError = null;
                 });
                 _loadBanks();
               },
@@ -378,9 +291,7 @@ class _RequiredAccountSetupScreenState
                           : Text(
                               _selectedBank?.name ?? 'Select your bank',
                               style: TextStyle(
-                                color: _selectedBank != null
-                                    ? null
-                                    : AppTheme.muted,
+                                color: _selectedBank != null ? null : AppTheme.muted,
                                 fontWeight: _selectedBank != null
                                     ? FontWeight.w600
                                     : FontWeight.normal,
@@ -407,41 +318,34 @@ class _RequiredAccountSetupScreenState
                 if (v.trim().length < 6) return 'Enter a valid account number';
                 return null;
               },
-              decoration: InputDecoration(
+              decoration: const InputDecoration(
                 counterText: '',
                 hintText: '10-digit NUBAN',
-                prefixIcon: const Icon(Icons.tag_rounded),
-                suffixIcon: _verifying
-                    ? const Padding(
-                        padding: EdgeInsets.all(12),
-                        child: SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        ),
-                      )
-                    : _verified != null
-                        ? const Icon(Icons.check_circle_rounded,
-                            color: Colors.green)
-                        : null,
+                prefixIcon: Icon(Icons.tag_rounded),
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            // ── Account holder name (manual entry) ────────────────────────
+            const _SectionLabel('Account holder name'),
+            const SizedBox(height: 8),
+            TextFormField(
+              controller: _accountNameCtrl,
+              textCapitalization: TextCapitalization.words,
+              validator: (v) {
+                if (v == null || v.trim().length < 2) {
+                  return 'Enter the account holder name';
+                }
+                return null;
+              },
+              decoration: const InputDecoration(
+                hintText: 'e.g. JOHN DOE',
+                prefixIcon: Icon(Icons.person_outline_rounded),
               ),
             ),
 
-            // ── Verify button (if not auto-triggered) ─────────────────────
-            if (_selectedBank != null &&
-                _accountNumberCtrl.text.trim().length >= 6 &&
-                _verified == null &&
-                !_verifying) ...[
-              const SizedBox(height: 8),
-              OutlinedButton.icon(
-                onPressed: _verifyAccount,
-                icon: const Icon(Icons.verified_user_rounded, size: 18),
-                label: const Text('Verify account name'),
-              ),
-            ],
-
-            // ── Verified account card ─────────────────────────────────────
-            if (_verified != null) ...[
+            // ── Summary card once all bank fields are filled ───────────────
+            if (_accountFilled) ...[
               const SizedBox(height: 12),
               Container(
                 padding: const EdgeInsets.all(16),
@@ -459,7 +363,7 @@ class _RequiredAccountSetupScreenState
                             color: Colors.green, size: 16),
                         SizedBox(width: 6),
                         Text(
-                          'Account verified',
+                          'Bank account details',
                           style: TextStyle(
                             color: Colors.green,
                             fontWeight: FontWeight.w700,
@@ -471,41 +375,15 @@ class _RequiredAccountSetupScreenState
                     const SizedBox(height: 10),
                     _VerifiedRow(
                         label: 'Account name',
-                        value: _verified!.accountName),
+                        value: _accountNameCtrl.text.trim()),
                     const SizedBox(height: 4),
                     _VerifiedRow(
                         label: 'Account number',
-                        value: _verified!.accountNumber),
+                        value: _accountNumberCtrl.text.trim()),
                     const SizedBox(height: 4),
                     _VerifiedRow(
                         label: 'Bank',
-                        value: _selectedBank?.name ?? ''),
-                  ],
-                ),
-              ),
-            ],
-
-            // ── Verification error ────────────────────────────────────────
-            if (_verifyError != null) ...[
-              const SizedBox(height: 10),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.red.withValues(alpha: 0.08),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: Colors.red.withValues(alpha: 0.3)),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.error_outline_rounded,
-                        color: Colors.red, size: 16),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        _verifyError!,
-                        style: const TextStyle(color: Colors.red, fontSize: 13),
-                      ),
-                    ),
+                        value: _selectedBank!.name),
                   ],
                 ),
               ),
@@ -563,17 +441,9 @@ class _RequiredAccountSetupScreenState
 // ─── Bank picker bottom sheet ─────────────────────────────────────────────────
 
 class _BankPickerSheet extends StatefulWidget {
-  const _BankPickerSheet({
-    required this.banks,
-    required this.searchCtrl,
-    required this.filteredBanks,
-    required this.onFilter,
-  });
+  const _BankPickerSheet({required this.banks});
 
   final List<BankInfo> banks;
-  final TextEditingController searchCtrl;
-  final List<BankInfo> filteredBanks;
-  final VoidCallback onFilter;
 
   @override
   State<_BankPickerSheet> createState() => _BankPickerSheetState();

@@ -1,0 +1,30 @@
+{
+  "project_info": {
+    "project_number": "519445347193",
+    "firebase_url": "https://macs-vwfkxi.firebaseio.com",
+    "project_id": "macs-vwfkxi",
+    "storage_bucket": "macs-vwfkxi.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:519445347193:android:0e36016987c17d67c3cda8",
+        "android_client_info": {
+          "package_name": "com.example.bondoo_mobile"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAt43VnYfFI2R5G2ngZTeQRMdlj9bKpMzU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

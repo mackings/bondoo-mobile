@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -63,7 +64,11 @@ class ApiClient {
       ..headers.addAll(headers)
       ..fields.addAll(fields);
     if (filePath != null) {
-      request.files.add(await http.MultipartFile.fromPath(fileField, filePath));
+      final bytes = await File(filePath).readAsBytes();
+      final filename = filePath.split('/').last;
+      request.files.add(
+        http.MultipartFile.fromBytes(fileField, bytes, filename: filename),
+      );
     }
     _logRequest('POST(multipart)', uri, fields);
     try {

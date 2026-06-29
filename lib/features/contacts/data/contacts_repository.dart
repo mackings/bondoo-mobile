@@ -54,11 +54,9 @@ class ContactsRepository {
       result.add(BondooContact(name: '$name', phone: phone, user: user));
     }
 
-    // Add unmatched contacts for invite (up to 100)
-    var inviteCount = 0;
+    // Add all unmatched contacts for invite
     for (final entry in phoneToName.entries) {
       if (matchedPhones.contains(entry.key)) continue;
-      if (inviteCount++ >= 100) break;
       result.add(BondooContact(name: entry.value, phone: entry.key));
     }
 

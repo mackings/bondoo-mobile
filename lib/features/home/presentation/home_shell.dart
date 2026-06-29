@@ -4,9 +4,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../chats/presentation/chats_screen.dart';
 import '../../market/presentation/market_screen.dart';
-import '../../offers/presentation/offers_screen.dart';
+// import '../../offers/presentation/offers_screen.dart'; // moved to Market tab flow
 import '../../profile/presentation/profile_screen.dart';
-import '../../trades/presentation/trades_screen.dart';
+// import '../../trades/presentation/trades_screen.dart'; // embedded in Wallet
 import '../../wallet/presentation/wallet_screen.dart';
 import '../../../core/theme/app_theme.dart';
 
@@ -65,7 +65,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
                 FilledButton.icon(
                   onPressed: () {
                     Navigator.pop(sheetContext);
-                    setState(() => index = 5);
+                    setState(() => index = 3);
                   },
                   icon: const Icon(Icons.person_rounded),
                   label: const Text('Go to Profile'),
@@ -89,8 +89,6 @@ class _HomeShellState extends ConsumerState<HomeShell> {
     final pages = [
       const ChatsScreen(),
       const MarketScreen(),
-      const OffersScreen(),
-      const TradesScreen(),
       const WalletScreen(),
       const ProfileScreen(),
     ];
@@ -126,16 +124,6 @@ class _HomeShellState extends ConsumerState<HomeShell> {
                   icon: Icon(Icons.storefront_outlined),
                   selectedIcon: Icon(Icons.storefront_rounded),
                   label: 'Market',
-                ),
-                NavigationDestination(
-                  icon: Icon(Icons.local_offer_outlined),
-                  selectedIcon: Icon(Icons.local_offer_rounded),
-                  label: 'Offers',
-                ),
-                NavigationDestination(
-                  icon: Icon(Icons.swap_horiz_outlined),
-                  selectedIcon: Icon(Icons.swap_horiz_rounded),
-                  label: 'Trades',
                 ),
                 NavigationDestination(
                   icon: Icon(Icons.wallet_outlined),

@@ -4,6 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../shared/widgets/api_feedback.dart';
 import '../../../shared/widgets/exchange_ui.dart';
+import '../../contacts/data/contacts_repository.dart';
+import '../../contacts/presentation/contacts_screen.dart';
 import '../data/chat_repository.dart';
 import 'chat_helpers.dart';
 import 'chat_screen.dart';
@@ -21,10 +23,29 @@ class _NewChatScreenState extends ConsumerState<NewChatScreen> {
   bool busy = false;
   String? openingUserId;
 
+  // Contacts-on-app strip
+  List<BondooContact>? _bondooContacts;
+  bool _contactsLoading = false;
+
   @override
   void initState() {
     super.initState();
     search();
+    _loadContacts();
+  }
+
+  Future<void> _loadContacts() async {
+    setState(() => _contactsLoading = true);
+    try {
+      final result =
+          await ref.read(contactsRepositoryProvider).syncContacts();
+      if (!mounted) return;
+      setState(() => _bondooContacts = result.where((c) => c.isOnApp).toList());
+    } catch (_) {
+      // Silently ignore — contacts strip is best-effort
+    } finally {
+      if (mounted) setState(() => _contactsLoading = false);
+    }
   }
 
   Future<void> search() async {
@@ -66,13 +87,114 @@ class _NewChatScreenState extends ConsumerState<NewChatScreen> {
     }
   }
 
+  Future<void> _openFromContact(BondooContact contact) async {
+    final user = contact.user!;
+    await open(user);
+  }
+
+  void _pushContacts() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const ContactsScreen()),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final bondooOnApp = _bondooContacts;
+    final showStrip =
+        bondooOnApp != null && bondooOnApp.isNotEmpty && !_contactsLoading;
+
     return ExchangeScaffold(
       title: 'New chat',
       subtitle: 'Find someone on BONDOO',
+      actions: [
+        IconButton(
+          tooltip: 'Contacts',
+          icon: const Icon(Icons.contacts_rounded),
+          onPressed: _pushContacts,
+        ),
+      ],
       body: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // ── "From your contacts" horizontal strip ──────────────────────
+          if (showStrip) ...[
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Row(
+                children: [
+                  const Text(
+                    'FROM YOUR CONTACTS',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      color: AppTheme.muted,
+                      letterSpacing: 0.8,
+                    ),
+                  ),
+                  const Spacer(),
+                  TextButton(
+                    onPressed: _pushContacts,
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    child: const Text('See all'),
+                  ),
+                ],
+              ),
+            ),
+            SizedBox(
+              height: 92,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.only(bottom: 4),
+                itemCount: bondooOnApp.length,
+                separatorBuilder: (_, _) => const SizedBox(width: 12),
+                itemBuilder: (context, index) {
+                  final contact = bondooOnApp[index];
+                  final user = contact.user!;
+                  final displayName =
+                      '${user['display_name'] ?? contact.name}';
+                  return GestureDetector(
+                    onTap: () => _openFromContact(contact),
+                    child: SizedBox(
+                      width: 64,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          AssetAvatar(
+                            label: initials(displayName),
+                            imageUrl: '${user['avatar_url'] ?? ''}',
+                            color: index.isEven
+                                ? AppTheme.primary
+                                : AppTheme.accent,
+                            size: 48,
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            displayName,
+                            maxLines: 2,
+                            textAlign: TextAlign.center,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 11,
+                              height: 1.2,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 14),
+          ],
+
+          // ── Search field ───────────────────────────────────────────────
           Padding(
             padding: const EdgeInsets.only(bottom: 14),
             child: TextField(
@@ -96,6 +218,8 @@ class _NewChatScreenState extends ConsumerState<NewChatScreen> {
                 borderRadius: BorderRadius.all(Radius.circular(8)),
               ),
             ),
+
+          // ── Search results ─────────────────────────────────────────────
           Expanded(
             child: users.isEmpty && !busy
                 ? const EmptyState(

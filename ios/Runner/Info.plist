@@ -24,6 +24,8 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSContactsUsageDescription</key>
+	<string>Bondoo needs your contacts to show which friends are already on the app.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>BONDOO needs camera access for video calls.</string>
 	<key>NSMicrophoneUsageDescription</key>

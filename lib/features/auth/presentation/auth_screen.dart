@@ -21,7 +21,17 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
   final email = TextEditingController();
   final password = TextEditingController();
   final displayName = TextEditingController();
+  final phone = TextEditingController();
   bool obscurePassword = true;
+
+  @override
+  void dispose() {
+    email.dispose();
+    password.dispose();
+    displayName.dispose();
+    phone.dispose();
+    super.dispose();
+  }
 
   Future<void> openForgotPassword() {
     return showModalBottomSheet<void>(
@@ -44,6 +54,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
           email: email.text.trim(),
           password: password.text,
           displayName: displayName.text.trim(),
+          phone: phone.text.trim(),
         );
         emailOtpSent = result['email_otp_sent'] != false;
       } else {
@@ -146,6 +157,22 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                           decoration: const InputDecoration(
                             labelText: 'Display name',
                             prefixIcon: Icon(Icons.person_outline_rounded),
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        TextFormField(
+                          controller: phone,
+                          keyboardType: TextInputType.phone,
+                          textInputAction: TextInputAction.next,
+                          validator: (value) {
+                            if (value == null || value.trim().length < 7) {
+                              return 'Enter a valid phone number';
+                            }
+                            return null;
+                          },
+                          decoration: const InputDecoration(
+                            labelText: 'Phone number',
+                            prefixIcon: Icon(Icons.phone_outlined),
                           ),
                         ),
                         const SizedBox(height: 14),

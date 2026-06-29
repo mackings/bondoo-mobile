@@ -77,11 +77,13 @@ class AuthController extends StateNotifier<AuthState> {
     required String email,
     required String password,
     required String displayName,
+    required String phone,
   }) async {
     return await _auth('/auth/signup', {
       'email': email,
       'password': password,
       'display_name': displayName,
+      'phone': phone,
     }, persistSession: false);
   }
 

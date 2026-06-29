@@ -12,6 +12,7 @@ import '../../../shared/widgets/async_state_view.dart';
 import '../../../shared/widgets/exchange_ui.dart';
 import '../../admin/presentation/admin_dashboard_screen.dart';
 import '../../auth/data/auth_repository.dart';
+import '../../trades/data/trade_repository.dart';
 import '../data/profile_repository.dart';
 
 
@@ -41,6 +42,14 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   String? hydratedProfileId;
   String bankCurrency = 'NGN';
   String walletAsset = 'BTC';
+
+  // Trade status
+  bool tradeStatusActive = false;
+  String tradeStatusType = 'selling';
+  String tradeStatusCoin = 'BTC';
+  String tradeStatusNetwork = 'BTC';
+  String tradeStatusPaymentMethod = 'Bank Transfer';
+  final tradeStatusRate = TextEditingController();
 
   Future<Map<String, dynamic>> load() =>
       ref.read(profileRepositoryProvider).load();
@@ -190,6 +199,52 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     }
   }
 
+  Future<void> saveTradeStatus() async {
+    if (pendingActions.contains('tradeStatus')) return;
+    setState(() => pendingActions.add('tradeStatus'));
+    try {
+      final rate = double.tryParse(tradeStatusRate.text.trim());
+      await ref.read(tradeRepositoryProvider).setTradeStatus(
+        type: tradeStatusType,
+        coin: tradeStatusCoin,
+        network: tradeStatusNetwork,
+        paymentMethod: tradeStatusPaymentMethod,
+        rate: rate,
+        active: true,
+      );
+      setState(() {
+        tradeStatusActive = true;
+        future = load();
+      });
+      if (mounted) {
+        await showApiSuccess(context, title: 'Status active', message: 'You are now visible in the Market.');
+      }
+    } catch (e) {
+      if (mounted) showError(context, e);
+    } finally {
+      if (mounted) setState(() => pendingActions.remove('tradeStatus'));
+    }
+  }
+
+  Future<void> stopTradeStatus() async {
+    if (pendingActions.contains('tradeStatus')) return;
+    setState(() => pendingActions.add('tradeStatus'));
+    try {
+      await ref.read(tradeRepositoryProvider).clearTradeStatus();
+      setState(() {
+        tradeStatusActive = false;
+        future = load();
+      });
+      if (mounted) {
+        await showApiSuccess(context, title: 'Status cleared', message: 'You are no longer visible in the Market.');
+      }
+    } catch (e) {
+      if (mounted) showError(context, e);
+    } finally {
+      if (mounted) setState(() => pendingActions.remove('tradeStatus'));
+    }
+  }
+
   @override
   void dispose() {
     displayName.dispose();
@@ -199,6 +254,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     accountNumber.dispose();
     walletProvider.dispose();
     walletAddress.dispose();
+    tradeStatusRate.dispose();
     super.dispose();
   }
 
@@ -238,6 +294,15 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                 walletAsset = '${wallet['asset'] ?? 'BTC'}';
                 walletProvider.text = '${wallet['provider'] ?? ''}';
                 walletAddress.text = '${wallet['address'] ?? ''}';
+              }
+              final ts = profile['trade_status'] as Map?;
+              if (ts != null) {
+                tradeStatusActive = ts['active'] == true;
+                tradeStatusType = '${ts['type'] ?? 'selling'}';
+                tradeStatusCoin = '${ts['coin'] ?? 'BTC'}';
+                tradeStatusNetwork = '${ts['network'] ?? 'BTC'}';
+                tradeStatusPaymentMethod = '${ts['payment_method'] ?? 'Bank Transfer'}';
+                tradeStatusRate.text = ts['rate'] != null ? '${ts['rate']}' : '';
               }
               hydratedProfileId = profileId;
             }
@@ -585,6 +650,125 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                             : linkWallet,
                         icon: const Icon(Icons.wallet_rounded),
                         label: const Text('Save payout wallet'),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 24),
+                const SectionLabel(
+                  'Trading status',
+                  caption: 'Appear in the Market so others can find you',
+                  icon: Icons.storefront_rounded,
+                ),
+                ExchangeCard(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      if (tradeStatusActive)
+                        InfoBanner(
+                          icon: Icons.storefront_rounded,
+                          title: 'Active · ${tradeStatusType == 'selling' ? 'Selling' : 'Buying'} $tradeStatusCoin',
+                          message: 'You are visible in the Market. Tap "Stop" to hide.',
+                          color: AppTheme.success,
+                        ),
+                      if (tradeStatusActive) const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: DropdownButtonFormField<String>(
+                              key: ValueKey('ts_type_$tradeStatusType'),
+                              initialValue: tradeStatusType,
+                              decoration: const InputDecoration(labelText: 'I am'),
+                              items: const [
+                                DropdownMenuItem(value: 'selling', child: Text('Selling')),
+                                DropdownMenuItem(value: 'buying', child: Text('Buying')),
+                              ],
+                              onChanged: (v) => setState(() => tradeStatusType = v!),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: DropdownButtonFormField<String>(
+                              key: ValueKey('ts_coin_$tradeStatusCoin'),
+                              initialValue: tradeStatusCoin,
+                              decoration: const InputDecoration(labelText: 'Coin'),
+                              items: ['BTC', 'ETH', 'USDC', 'USDT']
+                                  .map((c) => DropdownMenuItem(value: c, child: Text(c)))
+                                  .toList(),
+                              onChanged: (v) => setState(() {
+                                tradeStatusCoin = v!;
+                                tradeStatusNetwork = switch (v) {
+                                  'BTC' => 'BTC',
+                                  'ETH' => 'ERC20',
+                                  _ => 'TRC20',
+                                };
+                              }),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: DropdownButtonFormField<String>(
+                              key: ValueKey('ts_net_${tradeStatusCoin}_$tradeStatusNetwork'),
+                              initialValue: tradeStatusNetwork,
+                              decoration: const InputDecoration(labelText: 'Network'),
+                              items: switch (tradeStatusCoin) {
+                                'BTC' => ['BTC'],
+                                'ETH' => ['ERC20'],
+                                _ => ['TRC20', 'ERC20', 'BSC'],
+                              }
+                                  .map((n) => DropdownMenuItem(value: n, child: Text(n)))
+                                  .toList(),
+                              onChanged: (v) => setState(() => tradeStatusNetwork = v!),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: DropdownButtonFormField<String>(
+                              key: ValueKey('ts_pay_$tradeStatusPaymentMethod'),
+                              initialValue: tradeStatusPaymentMethod,
+                              decoration: const InputDecoration(labelText: 'Payment'),
+                              items: ['Bank Transfer', 'Mobile Money', 'Cash', 'PayPal', 'Other']
+                                  .map((m) => DropdownMenuItem(value: m, child: Text(m)))
+                                  .toList(),
+                              onChanged: (v) => setState(() => tradeStatusPaymentMethod = v!),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: tradeStatusRate,
+                        keyboardType: TextInputType.number,
+                        decoration: InputDecoration(
+                          labelText: 'Your rate (optional)',
+                          hintText: 'e.g. 1600000',
+                          prefixIcon: const Icon(Icons.price_change_outlined),
+                          suffixText: bankCurrency,
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: FilledButton.icon(
+                              onPressed: pendingActions.contains('tradeStatus') ? null : saveTradeStatus,
+                              icon: const Icon(Icons.storefront_rounded),
+                              label: const Text('Go Live'),
+                            ),
+                          ),
+                          if (tradeStatusActive) ...[
+                            const SizedBox(width: 10),
+                            OutlinedButton(
+                              onPressed: pendingActions.contains('tradeStatus') ? null : stopTradeStatus,
+                              style: OutlinedButton.styleFrom(foregroundColor: AppTheme.danger),
+                              child: const Text('Stop'),
+                            ),
+                          ],
+                        ],
                       ),
                     ],
                   ),

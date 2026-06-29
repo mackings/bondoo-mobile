@@ -84,4 +84,28 @@ class ChatRepository {
             as Map;
     return response['conversation_id'] as String;
   }
+
+  Future<Map<String, dynamic>> proposeTrade({
+    required String conversationId,
+    required String sellerUserId,
+    required String coin,
+    required String network,
+    required double fiatAmount,
+    required String fiatCurrency,
+    required double rate,
+    required String paymentMethod,
+    required String buyerWalletAddress,
+    required String buyerWalletNetwork,
+  }) async =>
+      await _api.post('/chat/conversations/$conversationId/propose-trade', {
+        'seller_user_id': sellerUserId,
+        'coin': coin,
+        'network': network,
+        'fiat_amount': fiatAmount,
+        'fiat_currency': fiatCurrency,
+        'rate': rate,
+        'payment_method': paymentMethod,
+        'buyer_wallet_address': buyerWalletAddress,
+        'buyer_wallet_network': buyerWalletNetwork,
+      }) as Map<String, dynamic>;
 }

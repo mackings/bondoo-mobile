@@ -94,6 +94,14 @@ class ApiClient {
     );
   }
 
+  Future<dynamic> delete(String path) async {
+    return _request(
+      method: 'DELETE',
+      uri: _uri(path),
+      () async => http.delete(_uri(path), headers: await _headers()),
+    );
+  }
+
   Future<dynamic> _request(
     Future<http.Response> Function() send, {
     required String method,

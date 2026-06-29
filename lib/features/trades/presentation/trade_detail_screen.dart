@@ -23,13 +23,14 @@ class TradeDetailScreen extends ConsumerStatefulWidget {
   ConsumerState<TradeDetailScreen> createState() => _TradeDetailScreenState();
 }
 
-// States that still need to change — keep polling until one of the
-// terminal states is reached.
+// States that still need to change — keep polling until a fully terminal
+// state (completed, cancelled, refunded) is reached.
 const _intermediateStatuses = {
   'awaiting_escrow',
   'escrowed',
   'payment_sent',
   'releasing',
+  'disputed', // can still transition to refunded
 };
 
 class _TradeDetailScreenState extends ConsumerState<TradeDetailScreen> {
@@ -43,8 +44,14 @@ class _TradeDetailScreenState extends ConsumerState<TradeDetailScreen> {
   void initState() {
     super.initState();
     trade = widget.trade;
+    // If the trade is a partial object (e.g. from a chat snapshot without
+    // buyer_user_id / deposit_address), fetch full data immediately so the
+    // correct role UI and deposit address are shown without waiting for a poll.
+    final isPartial = trade['buyer_user_id'] == null || trade['deposit_address'] == null;
+    if (isPartial) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _refresh());
+    }
     _startPollingIfNeeded();
-    // Immediately refresh when a push notification arrives for this trade
     _eventSub = TradeEvents.instance.onTradeUpdated.listen((id) {
       if (id == '${trade['id']}') _refresh();
     });
@@ -60,7 +67,7 @@ class _TradeDetailScreenState extends ConsumerState<TradeDetailScreen> {
   void _startPollingIfNeeded() {
     _pollingTimer?.cancel();
     if (_intermediateStatuses.contains('${trade['status']}')) {
-      _pollingTimer = Timer.periodic(const Duration(seconds: 20), (_) => _refresh());
+      _pollingTimer = Timer.periodic(const Duration(seconds: 8), (_) => _refresh());
     }
   }
 
@@ -320,13 +327,7 @@ class _TradeDetailScreenState extends ConsumerState<TradeDetailScreen> {
             ),
           ],
         ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh_rounded),
-            onPressed: _refresh,
-            tooltip: 'Refresh',
-          ),
-        ],
+        actions: const [],
       ),
       body: RefreshIndicator(
         onRefresh: _refresh,
@@ -633,7 +634,7 @@ class _TradeDetailScreenState extends ConsumerState<TradeDetailScreen> {
                         height: 160,
                         width: double.infinity,
                         fit: BoxFit.cover,
-                        errorBuilder: (_, __, e) => Container(
+                        errorBuilder: (_, _, e) => Container(
                           height: 80,
                           decoration: BoxDecoration(
                             color: AppTheme.elevated,

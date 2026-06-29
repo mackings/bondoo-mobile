@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../auth/data/auth_repository.dart';
 import '../../chats/presentation/chats_screen.dart';
+import '../../market/presentation/market_screen.dart';
 import '../../offers/presentation/offers_screen.dart';
 import '../../profile/presentation/profile_screen.dart';
 import '../../trades/presentation/trades_screen.dart';
@@ -64,7 +65,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
                 FilledButton.icon(
                   onPressed: () {
                     Navigator.pop(sheetContext);
-                    setState(() => index = 4);
+                    setState(() => index = 5);
                   },
                   icon: const Icon(Icons.person_rounded),
                   label: const Text('Go to Profile'),
@@ -87,6 +88,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
     _maybeShowSetupPrompt(user);
     final pages = [
       const ChatsScreen(),
+      const MarketScreen(),
       const OffersScreen(),
       const TradesScreen(),
       const WalletScreen(),
@@ -119,6 +121,11 @@ class _HomeShellState extends ConsumerState<HomeShell> {
                   icon: Icon(Icons.forum_outlined),
                   selectedIcon: Icon(Icons.forum_rounded),
                   label: 'Chats',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.storefront_outlined),
+                  selectedIcon: Icon(Icons.storefront_rounded),
+                  label: 'Market',
                 ),
                 NavigationDestination(
                   icon: Icon(Icons.local_offer_outlined),

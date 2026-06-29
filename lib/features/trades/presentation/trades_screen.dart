@@ -1,11 +1,13 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/theme/app_theme.dart';
-import '../../../shared/widgets/async_state_view.dart';
 import '../../../shared/widgets/coin_logo.dart';
 import '../../../shared/widgets/exchange_ui.dart';
 import '../../auth/data/auth_repository.dart';
+import '../data/trade_events.dart';
 import '../data/trade_repository.dart';
 import 'trade_detail_screen.dart';
 
@@ -17,59 +19,102 @@ class TradesScreen extends ConsumerStatefulWidget {
 }
 
 class _TradesScreenState extends ConsumerState<TradesScreen> {
-  late Future<List<dynamic>> _future;
+  List<dynamic>? _trades;
+  bool _initialLoading = true;
+  String? _error;
+  Timer? _pollingTimer;
+  StreamSubscription<String>? _eventSub;
 
   @override
   void initState() {
     super.initState();
-    _future = ref.read(tradeRepositoryProvider).list();
+    _loadTrades(initial: true);
+    _pollingTimer = Timer.periodic(const Duration(seconds: 10), (_) => _loadTrades());
+    _eventSub = TradeEvents.instance.onTradeUpdated.listen((_) => _loadTrades());
   }
 
-  void _refresh() => setState(() {
-        _future = ref.read(tradeRepositoryProvider).list();
-      });
+  @override
+  void dispose() {
+    _pollingTimer?.cancel();
+    _eventSub?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _loadTrades({bool initial = false}) async {
+    if (initial) setState(() => _initialLoading = true);
+    try {
+      final trades = await ref.read(tradeRepositoryProvider).list();
+      if (mounted) {
+        setState(() {
+          _trades = trades;
+          _initialLoading = false;
+          _error = null;
+        });
+      }
+    } catch (e) {
+      if (mounted && initial) {
+        setState(() {
+          _initialLoading = false;
+          _error = '$e';
+        });
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return ExchangeScaffold(
       title: 'Trades',
       subtitle: 'Your P2P trade history',
-      body: FutureBuilder<List<dynamic>>(
-        future: _future,
-        builder: (context, snapshot) => AsyncStateView<List<dynamic>>(
-          snapshot: snapshot,
-          onRetry: _refresh,
-          builder: (trades) {
-            if (trades.isEmpty) {
-              return const EmptyState(
-                icon: Icons.swap_horiz_rounded,
-                title: 'No trades yet',
-                message: 'Visit the Offers tab to start a P2P trade.',
-              );
-            }
-            return RefreshIndicator(
-              onRefresh: () async => _refresh(),
-              child: ListView.separated(
-                padding: const EdgeInsets.only(bottom: 96),
-                itemCount: trades.length,
-                separatorBuilder: (_, __) => const SizedBox(height: 12),
-                itemBuilder: (context, index) {
-                  final trade = trades[index] as Map<String, dynamic>;
-                  return _TradeCard(
-                    trade: trade,
-                    myId: ref.read(authControllerProvider).user?['id'] ?? '',
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => TradeDetailScreen(trade: trade),
-                      ),
-                    ).then((_) => _refresh()),
-                  );
-                },
-              ),
-            );
-          },
+      body: _buildBody(),
+    );
+  }
+
+  Widget _buildBody() {
+    if (_initialLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_error != null) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.error_outline, color: AppTheme.danger, size: 40),
+            const SizedBox(height: 12),
+            Text(_error!, textAlign: TextAlign.center, style: const TextStyle(color: AppTheme.muted)),
+            const SizedBox(height: 16),
+            FilledButton(onPressed: () => _loadTrades(initial: true), child: const Text('Retry')),
+          ],
         ),
+      );
+    }
+    final trades = _trades ?? [];
+    if (trades.isEmpty) {
+      return const EmptyState(
+        icon: Icons.swap_horiz_rounded,
+        title: 'No trades yet',
+        message: 'Visit the Offers tab to start a P2P trade.',
+      );
+    }
+    return RefreshIndicator(
+      onRefresh: () => _loadTrades(),
+      child: ListView.separated(
+        padding: const EdgeInsets.only(bottom: 96),
+        itemCount: trades.length,
+        separatorBuilder: (_, _) => const SizedBox(height: 12),
+        itemBuilder: (context, index) {
+          final trade = trades[index] as Map<String, dynamic>;
+          return _TradeCard(
+            trade: trade,
+            myId: ref.read(authControllerProvider).user?['id'] ?? '',
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => TradeDetailScreen(trade: trade),
+              ),
+            ).then((_) => _loadTrades()),
+          );
+        },
       ),
     );
   }

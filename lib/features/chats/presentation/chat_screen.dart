@@ -21,6 +21,8 @@ import '../../offers/presentation/offer_widgets.dart';
 import '../data/chat_repository.dart';
 import 'chat_helpers.dart';
 import 'new_chat_screen.dart';
+import 'propose_trade_dialog.dart';
+import 'trade_chat_card.dart';
 import 'transfer_dialog.dart';
 
 class ChatScreen extends ConsumerStatefulWidget {
@@ -396,6 +398,28 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                                           as String?,
                                     )
                                   : null;
+
+                              // Trade update — centered system message
+                              if (message['kind'] == 'trade_update') {
+                                return Padding(
+                                  padding: const EdgeInsets.only(bottom: 8),
+                                  child: Center(
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                                      decoration: BoxDecoration(
+                                        color: AppTheme.elevated,
+                                        borderRadius: BorderRadius.circular(20),
+                                        border: Border.all(color: AppTheme.border),
+                                      ),
+                                      child: TradeUpdateCard(
+                                        body: '${message['body'] ?? ''}',
+                                        trade: message['trade'] as Map?,
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              }
+
                               return Align(
                                 alignment: mine
                                     ? Alignment.centerRight
@@ -439,6 +463,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                                             offer:
                                                 (message['offer'] as Map?) ??
                                                 const {},
+                                          )
+                                        : message['kind'] == 'trade_proposal'
+                                        ? TradeProposalCard(
+                                            trade: (message['trade'] as Map?) ?? const {},
                                           )
                                         : message['kind'] == 'image'
                                         ? ImageMessageBubble(
@@ -584,6 +612,25 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                                   )
                                 : const Icon(Icons.currency_exchange_rounded),
                           ),
+                          if (meta.otherId != null)
+                            IconButton(
+                              tooltip: 'Propose trade',
+                              onPressed: () => showProposeTradeDialog(
+                                context: context,
+                                ref: ref,
+                                conversationId: id,
+                                sellerUserId: meta.otherId!,
+                                sellerName: meta.title,
+                                onProposed: () => setState(() { future = load(); }),
+                              ),
+                              style: IconButton.styleFrom(
+                                backgroundColor: Colors.transparent,
+                                foregroundColor: AppTheme.accent,
+                                minimumSize: const Size.square(40),
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              ),
+                              icon: const Icon(Icons.handshake_rounded),
+                            ),
                           const SizedBox(width: 4),
                           Expanded(
                             child: Container(

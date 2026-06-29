@@ -59,4 +59,32 @@ class TradeRepository {
   Future<Map<String, dynamic>> dispute(String id, String reason) async =>
       await _api.post('/trades/$id/dispute', {'reason': reason})
           as Map<String, dynamic>;
+
+  Future<List<dynamic>> getMarket({String? type, String? coin}) async {
+    final params = <String>[];
+    if (type != null) params.add('type=${Uri.encodeQueryComponent(type)}');
+    if (coin != null) params.add('coin=${Uri.encodeQueryComponent(coin)}');
+    final query = params.isEmpty ? '' : '?${params.join('&')}';
+    return await _api.get('/market$query') as List<dynamic>;
+  }
+
+  Future<Map<String, dynamic>> setTradeStatus({
+    required String type,
+    required String coin,
+    required String network,
+    required String paymentMethod,
+    double? rate,
+    bool active = true,
+  }) async =>
+      await _api.patch('/me/trade-status', {
+        'type': type,
+        'coin': coin,
+        'network': network,
+        'payment_method': paymentMethod,
+        'rate': rate,
+        'active': active,
+      }) as Map<String, dynamic>;
+
+  Future<Map<String, dynamic>> clearTradeStatus() async =>
+      await _api.delete('/me/trade-status') as Map<String, dynamic>;
 }

@@ -18,6 +18,8 @@ class BondooApp extends StatelessWidget {
       title: 'BONDOO',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.dark,
+      darkTheme: AppTheme.dark,
+      themeMode: ThemeMode.dark,
       home: const AuthGate(),
     );
   }

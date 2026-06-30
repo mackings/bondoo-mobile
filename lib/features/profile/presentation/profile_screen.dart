@@ -42,6 +42,14 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   String? hydratedProfileId;
   String bankCurrency = 'NGN';
   String walletAsset = 'BTC';
+  String walletNetwork = 'BTC';
+
+  static const _networksByAsset = {
+    'BTC':  ['BTC'],
+    'ETH':  ['ERC20'],
+    'USDC': ['ERC20', 'TRC20', 'BSC'],
+    'USDT': ['TRC20', 'ERC20', 'BSC'],
+  };
 
   // Trade status
   bool tradeStatusActive = false;
@@ -178,6 +186,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
           .read(profileRepositoryProvider)
           .linkWallet(
             walletAsset.toLowerCase(),
+            walletNetwork,
             walletProvider.text.trim(),
             walletAddress.text.trim(),
           );
@@ -292,6 +301,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
               if (wallets.isNotEmpty) {
                 final wallet = wallets.first as Map;
                 walletAsset = '${wallet['asset'] ?? 'BTC'}';
+                walletNetwork = '${wallet['network'] ?? (_networksByAsset[walletAsset]?.first ?? 'BTC')}';
                 walletProvider.text = '${wallet['provider'] ?? ''}';
                 walletAddress.text = '${wallet['address'] ?? ''}';
               }
@@ -591,7 +601,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                       for (final wallet in payoutWallets) ...[
                         InfoBanner(
                           icon: Icons.wallet_rounded,
-                          title: '${wallet['asset']} · ${wallet['provider']}',
+                          title: '${wallet['asset']} (${wallet['network'] ?? '—'}) · ${wallet['provider']}',
                           message: '${wallet['address']}',
                         ),
                         const SizedBox(height: 10),
@@ -601,22 +611,35 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                         key: walletFormKey,
                         child: Column(
                           children: [
-                            DropdownButtonFormField<String>(
-                              initialValue: walletAsset,
-                              decoration: const InputDecoration(
-                                labelText: 'Asset',
-                              ),
-                              items: const ['BTC', 'ETH', 'USDC', 'USDT']
-                                  .map(
-                                    (value) => DropdownMenuItem(
-                                      value: value,
-                                      child: Text(value),
-                                    ),
-                                  )
-                                  .toList(),
-                              onChanged: (value) => setState(
-                                () => walletAsset = value ?? walletAsset,
-                              ),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: DropdownButtonFormField<String>(
+                                    key: ValueKey('asset_$walletAsset'),
+                                    initialValue: walletAsset,
+                                    decoration: const InputDecoration(labelText: 'Asset'),
+                                    items: const ['BTC', 'ETH', 'USDC', 'USDT']
+                                        .map((v) => DropdownMenuItem(value: v, child: Text(v)))
+                                        .toList(),
+                                    onChanged: (v) => setState(() {
+                                      walletAsset = v ?? walletAsset;
+                                      walletNetwork = _networksByAsset[walletAsset]!.first;
+                                    }),
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: DropdownButtonFormField<String>(
+                                    key: ValueKey('net_${walletAsset}_$walletNetwork'),
+                                    initialValue: walletNetwork,
+                                    decoration: const InputDecoration(labelText: 'Network'),
+                                    items: (_networksByAsset[walletAsset] ?? ['BTC'])
+                                        .map((n) => DropdownMenuItem(value: n, child: Text(n)))
+                                        .toList(),
+                                    onChanged: (v) => setState(() => walletNetwork = v ?? walletNetwork),
+                                  ),
+                                ),
+                              ],
                             ),
                             const SizedBox(height: 12),
                             TextFormField(

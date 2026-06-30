@@ -40,16 +40,6 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen> {
           ),
         ),
         IconButton(
-          tooltip: 'My offers',
-          icon: const Icon(Icons.local_offer_rounded),
-          onPressed: () => Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => const OffersScreen(initialMine: true),
-            ),
-          ),
-        ),
-        IconButton(
           tooltip: 'Start a new chat',
           icon: const Icon(Icons.edit_square),
           onPressed: () =>

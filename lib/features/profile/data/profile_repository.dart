@@ -40,11 +40,13 @@ class ProfileRepository {
 
   Future<Map<String, dynamic>> linkWallet(
     String chain,
+    String network,
     String provider,
     String address,
   ) async {
     return await _api.post('/me/linked-wallet', {
           'chain': chain,
+          'network': network,
           'provider': provider,
           'address': address,
         })

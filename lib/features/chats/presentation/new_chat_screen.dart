@@ -111,7 +111,7 @@ class _NewChatScreenState extends ConsumerState<NewChatScreen> {
       actions: [
         IconButton(
           tooltip: 'Contacts',
-          icon: const Icon(Icons.contacts_rounded),
+          icon: const Icon(Icons.person_add_rounded),
           onPressed: _pushContacts,
         ),
       ],

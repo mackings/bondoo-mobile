@@ -38,6 +38,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   final text = TextEditingController();
   final recorder = AudioRecorder();
   final imagePicker = ImagePicker();
+  final _scrollCtrl = ScrollController();
   late Future<List<dynamic>> future = load();
   bool sending = false;
   bool transferring = false;
@@ -304,11 +305,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     }
   }
 
+  void _scrollToEnd() {
+    if (!_scrollCtrl.hasClients) return;
+    _scrollCtrl.jumpTo(_scrollCtrl.position.maxScrollExtent);
+  }
+
   @override
   void dispose() {
     recordingTimer?.cancel();
     recorder.dispose();
     text.dispose();
+    _scrollCtrl.dispose();
     super.dispose();
   }
 
@@ -373,6 +380,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                   }),
                   builder: (messages) {
                     maybeShowTradeGuidance(messages);
+                    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToEnd());
                     return messages.isEmpty
                         ? const EmptyState(
                             icon: Icons.waving_hand_outlined,
@@ -381,6 +389,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                                 'Send the first message in this conversation.',
                           )
                         : ListView.builder(
+                            controller: _scrollCtrl,
                             padding: const EdgeInsets.fromLTRB(16, 12, 16, 18),
                             itemCount: messages.length,
                             itemBuilder: (context, index) {
@@ -415,6 +424,46 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                                         body: '${message['body'] ?? ''}',
                                         trade: message['trade'] as Map?,
                                       ),
+                                    ),
+                                  ),
+                                );
+                              }
+
+                              // Image messages: no bubble background, image fills its own shape
+                              if (message['kind'] == 'image') {
+                                return Padding(
+                                  padding: const EdgeInsets.only(bottom: 8),
+                                  child: Align(
+                                    alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      crossAxisAlignment: mine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+                                      children: [
+                                        ImageMessageBubble(
+                                          imageDataUrl: '${message['image_data_url'] ?? ''}',
+                                          mine: mine,
+                                        ),
+                                        const SizedBox(height: 3),
+                                        Padding(
+                                          padding: const EdgeInsets.symmetric(horizontal: 4),
+                                          child: Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              Text(time, style: const TextStyle(color: AppTheme.muted, fontSize: 10.5, fontWeight: FontWeight.w600, height: 1)),
+                                              if (readReceipt != null) ...[
+                                                const SizedBox(width: 5),
+                                                Icon(
+                                                  readReceipt == 'Read' ? Icons.done_all_rounded : Icons.done_rounded,
+                                                  size: 14,
+                                                  color: readReceipt == 'Read' ? AppTheme.accent : AppTheme.muted,
+                                                ),
+                                                const SizedBox(width: 2),
+                                                Text(readReceipt, style: TextStyle(color: readReceipt == 'Read' ? AppTheme.accent : AppTheme.muted, fontSize: 10.5, fontWeight: FontWeight.w700, height: 1)),
+                                              ],
+                                            ],
+                                          ),
+                                        ),
+                                      ],
                                     ),
                                   ),
                                 );
@@ -468,12 +517,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                                         ? TradeProposalCard(
                                             trade: (message['trade'] as Map?) ?? const {},
                                           )
-                                        : message['kind'] == 'image'
-                                        ? ImageMessageBubble(
-                                            imageDataUrl:
-                                                '${message['image_data_url'] ?? ''}',
-                                            mine: mine,
-                                          )
                                         : message['kind'] == 'voice'
                                         ? VoiceNoteBubble(
                                             audioDataUrl:
@@ -503,7 +546,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                                               ),
                                             ],
                                           )
-                                        : Text('${message['body'] ?? ''}'),
+                                        : Text('${message['body'] ?? ''}', style: TextStyle(color: mine ? Colors.white : AppTheme.text, height: 1.4)),
                                   ),
                                 ),
                               );
@@ -1077,7 +1120,6 @@ class ImageMessageBubble extends StatelessWidget {
         borderRadius: BorderRadius.circular(14),
         child: ConstrainedBox(
           constraints: const BoxConstraints(
-            minWidth: 180,
             maxWidth: 280,
             maxHeight: 320,
           ),

@@ -10,7 +10,6 @@ list(APPEND FLUTTER_PLUGIN_LIST
   iris_method_channel
   permission_handler_windows
   record_windows
-  share_plus_windows
   url_launcher_windows
 )
 

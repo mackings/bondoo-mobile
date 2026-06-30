@@ -146,6 +146,14 @@ class _RequiredAccountSetupScreenState
 
   String _currency = 'NGN';
   String _asset = 'BTC';
+  String _network = 'BTC';
+
+  static const _networksByAsset = {
+    'BTC':  ['BTC'],
+    'ETH':  ['ERC20'],
+    'USDC': ['ERC20', 'TRC20', 'BSC'],
+    'USDT': ['TRC20', 'ERC20', 'BSC'],
+  };
 
   List<BankInfo> _banks = [];
   BankInfo? _selectedBank;
@@ -213,6 +221,7 @@ class _RequiredAccountSetupScreenState
           );
       final user = await ref.read(profileRepositoryProvider).linkWallet(
             _asset.toLowerCase(),
+            _network,
             _walletProviderCtrl.text.trim(),
             _walletAddressCtrl.text.trim(),
           );
@@ -394,16 +403,35 @@ class _RequiredAccountSetupScreenState
             // ── Wallet section ────────────────────────────────────────────
             const _SectionLabel('Crypto wallet (for receiving coins)'),
             const SizedBox(height: 12),
-            DropdownButtonFormField<String>(
-              initialValue: _asset,
-              decoration: const InputDecoration(
-                labelText: 'Wallet asset',
-                prefixIcon: Icon(Icons.generating_tokens_rounded),
-              ),
-              items: const ['BTC', 'ETH', 'USDC', 'USDT']
-                  .map((v) => DropdownMenuItem(value: v, child: Text(v)))
-                  .toList(),
-              onChanged: (v) => setState(() => _asset = v ?? _asset),
+            Row(
+              children: [
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    key: ValueKey('asset_$_asset'),
+                    initialValue: _asset,
+                    decoration: const InputDecoration(labelText: 'Asset'),
+                    items: const ['BTC', 'ETH', 'USDC', 'USDT']
+                        .map((v) => DropdownMenuItem(value: v, child: Text(v)))
+                        .toList(),
+                    onChanged: (v) => setState(() {
+                      _asset = v ?? _asset;
+                      _network = _networksByAsset[_asset]!.first;
+                    }),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    key: ValueKey('net_${_asset}_$_network'),
+                    initialValue: _network,
+                    decoration: const InputDecoration(labelText: 'Network'),
+                    items: (_networksByAsset[_asset] ?? ['BTC'])
+                        .map((n) => DropdownMenuItem(value: n, child: Text(n)))
+                        .toList(),
+                    onChanged: (v) => setState(() => _network = v ?? _network),
+                  ),
+                ),
+              ],
             ),
             const SizedBox(height: 12),
             TextFormField(

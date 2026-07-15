@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -18,6 +19,7 @@ class StoryCreatorSheet extends ConsumerStatefulWidget {
 class _StoryCreatorSheetState extends ConsumerState<StoryCreatorSheet> {
   final _textCtrl = TextEditingController();
   String? _imageDataUrl;
+  Uint8List? _imageBytes;   // cached so caption typing doesn't re-decode
   bool _posting = false;
   final _picker = ImagePicker();
 
@@ -37,8 +39,11 @@ class _StoryCreatorSheetState extends ConsumerState<StoryCreatorSheet> {
     final bytes = await file.readAsBytes();
     if (bytes.isEmpty) return;
     final mimeType = file.mimeType ?? 'image/jpeg';
+    // Encode once and cache both forms — setState on caption input won't re-decode
+    final dataUrl = 'data:$mimeType;base64,${base64Encode(bytes)}';
     setState(() {
-      _imageDataUrl = 'data:$mimeType;base64,${base64Encode(bytes)}';
+      _imageBytes = bytes;
+      _imageDataUrl = dataUrl;
     });
   }
 
@@ -114,20 +119,19 @@ class _StoryCreatorSheetState extends ConsumerState<StoryCreatorSheet> {
                 border: Border.all(color: AppTheme.border),
               ),
               clipBehavior: Clip.antiAlias,
-              child: _imageDataUrl != null
+              child: _imageBytes != null
                   ? Stack(
                       fit: StackFit.expand,
                       children: [
                         Image.memory(
-                          base64Decode(_imageDataUrl!.substring(
-                              _imageDataUrl!.indexOf(',') + 1)),
+                          _imageBytes!,
                           fit: BoxFit.cover,
                         ),
                         Positioned(
                           top: 8,
                           right: 8,
                           child: GestureDetector(
-                            onTap: () => setState(() => _imageDataUrl = null),
+                            onTap: () => setState(() { _imageDataUrl = null; _imageBytes = null; }),
                             child: Container(
                               padding: const EdgeInsets.all(4),
                               decoration: const BoxDecoration(

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -7,6 +9,7 @@ import '../../auth/data/auth_repository.dart';
 import '../../chats/data/chat_repository.dart';
 import '../../chats/presentation/chat_screen.dart';
 import '../../trades/data/trade_repository.dart';
+import '../../../core/network/socket_service.dart';
 import '../data/story_repository.dart';
 import 'story_creator.dart';
 import 'story_viewer.dart';
@@ -29,11 +32,38 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
   Map<String, dynamic>? _myStory;
   bool _storiesLoading = true;
 
+  StreamSubscription<Map<String, dynamic>>? _newStorySub;
+  StreamSubscription<String>? _storyDeletedSub;
+
   @override
   void initState() {
     super.initState();
     _load();
-    _loadStories();
+    _loadStories().then((_) => _subscribeStories());
+  }
+
+  @override
+  void dispose() {
+    _newStorySub?.cancel();
+    _storyDeletedSub?.cancel();
+    super.dispose();
+  }
+
+  void _subscribeStories() {
+    final myId = ref.read(authControllerProvider).user?['id'] as String?;
+    // WS payload has no image_data_url (stripped to stay under Socket.IO 1MB
+    // buffer limit). Do a full REST reload so the image loads properly.
+    _newStorySub = SocketService().onNewStory.listen((story) {
+      if (!mounted) return;
+      if ('${story['user_id']}' == myId) return; // own story, already updated
+      _loadStories();
+    });
+    _storyDeletedSub = SocketService().onStoryDeleted.listen((userId) {
+      if (!mounted) return;
+      setState(() {
+        _stories = _stories.where((s) => '${s['user_id']}' != userId).toList();
+      });
+    });
   }
 
   Future<void> _load() async {
@@ -80,16 +110,19 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
   }
 
   Future<void> _openMyStoryViewers() async {
-    final result = await showModalBottomSheet<String>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: AppTheme.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+    if (_myStory == null) return;
+    // Show the story content first, then let the viewer sheet handle viewers
+    await Navigator.push(
+      context,
+      PageRouteBuilder(
+        opaque: false,
+        barrierColor: Colors.black,
+        pageBuilder: (_, _, _) => StoryViewer(story: _myStory!, isOwnStory: true),
+        transitionsBuilder: (_, anim, _, child) =>
+            FadeTransition(opacity: anim, child: child),
       ),
-      builder: (_) => const MyStoryViewersSheet(),
     );
-    if (result == 'deleted') _loadStories();
+    _loadStories();
   }
 
   Future<void> _openStory(Map<String, dynamic> story) async {
@@ -197,9 +230,7 @@ class _StoriesRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (!loading && stories.isEmpty && myStory == null) {
-      return const SizedBox.shrink();
-    }
+    // Always show the row — at minimum the user's own "Add Story" tile
     return SizedBox(
       height: 90,
       child: loading

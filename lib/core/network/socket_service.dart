@@ -11,8 +11,12 @@ class SocketService {
   sio.Socket? _socket;
   String? _currentToken;
   final _newMessageCtrl = StreamController<Map<String, dynamic>>.broadcast();
+  final _newStoryCtrl = StreamController<Map<String, dynamic>>.broadcast();
+  final _storyDeletedCtrl = StreamController<String>.broadcast();
 
   Stream<Map<String, dynamic>> get onNewMessage => _newMessageCtrl.stream;
+  Stream<Map<String, dynamic>> get onNewStory => _newStoryCtrl.stream;
+  Stream<String> get onStoryDeleted => _storyDeletedCtrl.stream;
   bool get connected => _socket?.connected == true;
 
   void connect(String token, String baseUrl) {
@@ -45,6 +49,18 @@ class SocketService {
         final data = (raw is List && raw.isNotEmpty) ? raw.first : raw;
         if (data is Map) {
           _newMessageCtrl.add(Map<String, dynamic>.from(data));
+        }
+      })
+      ..on('new_story', (raw) {
+        final data = (raw is List && raw.isNotEmpty) ? raw.first : raw;
+        if (data is Map) {
+          _newStoryCtrl.add(Map<String, dynamic>.from(data));
+        }
+      })
+      ..on('story_deleted', (raw) {
+        final data = (raw is List && raw.isNotEmpty) ? raw.first : raw;
+        if (data is Map) {
+          _storyDeletedCtrl.add('${data['user_id'] ?? ''}');
         }
       });
     _socket!.connect();

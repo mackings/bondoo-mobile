@@ -11,9 +11,11 @@ import '../../chats/data/chat_repository.dart';
 import '../../chats/presentation/chat_screen.dart';
 import '../data/story_repository.dart';
 
+
 class StoryViewer extends ConsumerStatefulWidget {
-  const StoryViewer({super.key, required this.story});
+  const StoryViewer({super.key, required this.story, this.isOwnStory = false});
   final Map<String, dynamic> story;
+  final bool isOwnStory;
 
   @override
   ConsumerState<StoryViewer> createState() => _StoryViewerState();
@@ -80,10 +82,29 @@ class _StoryViewerState extends ConsumerState<StoryViewer>
           },
         ],
       };
+      // Build a pre-filled caption so the replier's message references the story
+      final storyText = widget.story['text'] as String?;
+      final hasImage = widget.story['image_data_url'] != null;
+      final posterName = (widget.story['user'] as Map?)?['display_name']
+          ?? (widget.story['user'] as Map?)?['username']
+          ?? 'their';
+      final caption = [
+        if (hasImage) '📷',
+        if (storyText != null && storyText.isNotEmpty) '"$storyText"',
+      ].join(' ');
+      final initialText = caption.isNotEmpty
+          ? 'Replying to $posterName\'s story: $caption\n\n'
+          : 'Replying to $posterName\'s story\n\n';
+
       Navigator.pop(context);
       Navigator.push(
         context,
-        MaterialPageRoute(builder: (_) => ChatScreen(conversation: conversation)),
+        MaterialPageRoute(
+          builder: (_) => ChatScreen(
+            conversation: conversation,
+            initialText: initialText,
+          ),
+        ),
       );
     } catch (e) {
       if (mounted) {
@@ -219,30 +240,59 @@ class _StoryViewerState extends ConsumerState<StoryViewer>
                 ),
               ),
 
-            // ── Reply button ─────────────────────────────────────────
+            // ── Bottom action button ──────────────────────────────────
             Positioned(
               left: 20,
               right: 20,
               bottom: MediaQuery.of(context).padding.bottom + 24,
-              child: GestureDetector(
-                onTap: () {},
-                child: FilledButton.icon(
-                  onPressed: _loadingReply ? null : _reply,
-                  icon: _loadingReply
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(
-                              strokeWidth: 2, color: Colors.white),
-                        )
-                      : const Icon(Icons.reply_rounded),
-                  label: const Text('Reply in DM'),
-                  style: FilledButton.styleFrom(
-                    backgroundColor: AppTheme.primary,
-                    minimumSize: const Size(double.infinity, 48),
-                  ),
-                ),
-              ),
+              child: widget.isOwnStory
+                  ? FilledButton.icon(
+                      onPressed: () {
+                        _progress.stop();
+                        showModalBottomSheet<String>(
+                          context: context,
+                          isScrollControlled: true,
+                          backgroundColor: Theme.of(context).colorScheme.surface,
+                          shape: const RoundedRectangleBorder(
+                            borderRadius:
+                                BorderRadius.vertical(top: Radius.circular(20)),
+                          ),
+                          builder: (_) => const MyStoryViewersSheet(),
+                        ).then((result) {
+                          if (result == 'deleted' && context.mounted) {
+                            Navigator.pop(context);
+                          } else if (mounted) {
+                            _progress.forward();
+                          }
+                        });
+                      },
+                      icon: const Icon(Icons.visibility_outlined),
+                      label: Text(
+                        viewCount == 0
+                            ? 'No views yet'
+                            : '$viewCount view${viewCount == 1 ? '' : 's'}',
+                      ),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: Colors.white24,
+                        minimumSize: const Size(double.infinity, 48),
+                      ),
+                    )
+                  : FilledButton.icon(
+                      onPressed: _loadingReply ? null : _reply,
+                      icon: _loadingReply
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2, color: Colors.white),
+                            )
+                          : const Icon(Icons.reply_rounded),
+                      label: const Text('Reply in DM'),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: AppTheme.primary,
+                        minimumSize: const Size(double.infinity, 48),
+                      ),
+                    ),
             ),
           ],
         ),

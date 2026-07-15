@@ -27,9 +27,10 @@ import 'trade_chat_card.dart';
 import 'transfer_dialog.dart';
 
 class ChatScreen extends ConsumerStatefulWidget {
-  const ChatScreen({super.key, required this.conversation});
+  const ChatScreen({super.key, required this.conversation, this.initialText});
 
   final Map<String, dynamic> conversation;
+  final String? initialText;
 
   @override
   ConsumerState<ChatScreen> createState() => _ChatScreenState();
@@ -61,6 +62,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   @override
   void initState() {
     super.initState();
+    if (widget.initialText != null) text.text = widget.initialText!;
     _loadMessages().then((_) { if (mounted) _initSocket(); });
   }
 

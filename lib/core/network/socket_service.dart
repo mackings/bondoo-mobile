@@ -19,17 +19,20 @@ class SocketService {
     if (_socket?.connected == true && _currentToken == token) return;
     _socket?.dispose();
     _currentToken = token;
-    // Dart's Uri.port returns 0 for default ports (443/80), which breaks the
-    // socket.io Dart client's WebSocket URL. Normalise to an explicit port.
+    // Build an explicit wss:// URL with a hard port so the Dart socket.io
+    // client never picks up port 0 from Uri.parse on an https:// string.
+    // We skip the polling transport entirely because Render's HTTP proxy
+    // times out long-poll connections — raw WebSocket upgrades work fine.
     final uri = Uri.parse(baseUrl);
-    final port = uri.hasPort && uri.port != 0
+    final port = (uri.hasPort && uri.port != 0)
         ? uri.port
         : (uri.scheme == 'https' ? 443 : 80);
-    final wsUrl = uri.replace(port: port).toString();
+    final scheme = uri.scheme == 'https' ? 'wss' : 'ws';
+    final wsUrl = '$scheme://${uri.host}:$port';
     _socket = sio.io(
       wsUrl,
       sio.OptionBuilder()
-          .setTransports(['polling', 'websocket'])
+          .setTransports(['websocket'])
           .disableAutoConnect()
           .setAuth({'token': token})
           .build(),

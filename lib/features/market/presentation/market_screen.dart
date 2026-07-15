@@ -7,6 +7,9 @@ import '../../auth/data/auth_repository.dart';
 import '../../chats/data/chat_repository.dart';
 import '../../chats/presentation/chat_screen.dart';
 import '../../trades/data/trade_repository.dart';
+import '../data/story_repository.dart';
+import 'story_creator.dart';
+import 'story_viewer.dart';
 
 class MarketScreen extends ConsumerStatefulWidget {
   const MarketScreen({super.key});
@@ -22,10 +25,15 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
   String? _filterType;
   String? _filterCoin;
 
+  List<Map<String, dynamic>> _stories = [];
+  Map<String, dynamic>? _myStory;
+  bool _storiesLoading = true;
+
   @override
   void initState() {
     super.initState();
     _load();
+    _loadStories();
   }
 
   Future<void> _load() async {
@@ -41,6 +49,64 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
     }
   }
 
+  Future<void> _loadStories() async {
+    if (mounted) setState(() => _storiesLoading = true);
+    try {
+      final repo = ref.read(storyRepositoryProvider);
+      final results = await Future.wait([repo.getStories(), repo.getMyStory()]);
+      if (mounted) {
+        setState(() {
+          _stories = results[0] as List<Map<String, dynamic>>;
+          _myStory = results[1] as Map<String, dynamic>?;
+          _storiesLoading = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _storiesLoading = false);
+    }
+  }
+
+  Future<void> _openStoryCreator() async {
+    final result = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppTheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => const StoryCreatorSheet(),
+    );
+    if (result == 'created') _loadStories();
+  }
+
+  Future<void> _openMyStoryViewers() async {
+    final result = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppTheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => const MyStoryViewersSheet(),
+    );
+    if (result == 'deleted') _loadStories();
+  }
+
+  Future<void> _openStory(Map<String, dynamic> story) async {
+    await Navigator.push(
+      context,
+      PageRouteBuilder(
+        opaque: false,
+        barrierColor: Colors.black,
+        pageBuilder: (_, _, _) => StoryViewer(story: story),
+        transitionsBuilder: (_, anim, _, child) =>
+            FadeTransition(opacity: anim, child: child),
+      ),
+    );
+    // Refresh viewed state
+    _loadStories();
+  }
+
   @override
   Widget build(BuildContext context) {
     return ExchangeScaffold(
@@ -48,6 +114,15 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
       subtitle: 'Live traders ready to deal',
       body: Column(
         children: [
+          // ── Stories row ────────────────────────────────────────────
+          _StoriesRow(
+            stories: _stories,
+            myStory: _myStory,
+            loading: _storiesLoading,
+            onAddStory: _openStoryCreator,
+            onMyStory: _openMyStoryViewers,
+            onStoryTap: _openStory,
+          ),
           _FilterBar(
             filterType: _filterType,
             filterCoin: _filterCoin,
@@ -87,7 +162,7 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
       );
     }
     return RefreshIndicator(
-      onRefresh: _load,
+      onRefresh: () async { await _load(); await _loadStories(); },
       child: ListView.separated(
         padding: const EdgeInsets.fromLTRB(0, 8, 0, 96),
         itemCount: traders.length,
@@ -96,6 +171,170 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
           final trader = traders[i] as Map<String, dynamic>;
           return _TraderCard(trader: trader);
         },
+      ),
+    );
+  }
+}
+
+// ── Stories row ─────────────────────────────────────────────────────────────
+
+class _StoriesRow extends StatelessWidget {
+  const _StoriesRow({
+    required this.stories,
+    required this.myStory,
+    required this.loading,
+    required this.onAddStory,
+    required this.onMyStory,
+    required this.onStoryTap,
+  });
+
+  final List<Map<String, dynamic>> stories;
+  final Map<String, dynamic>? myStory;
+  final bool loading;
+  final VoidCallback onAddStory;
+  final VoidCallback onMyStory;
+  final void Function(Map<String, dynamic>) onStoryTap;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!loading && stories.isEmpty && myStory == null) {
+      return const SizedBox.shrink();
+    }
+    return SizedBox(
+      height: 90,
+      child: loading
+          ? const Center(
+              child: SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2)))
+          : ListView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+              children: [
+                // ── My story tile ─────────────────────────────────
+                _StoryTile(
+                  label: 'My Story',
+                  avatarUrl: '',
+                  isMe: true,
+                  hasStory: myStory != null,
+                  viewed: false,
+                  onTap: myStory != null ? onMyStory : onAddStory,
+                ),
+                // ── Other users' stories ──────────────────────────
+                for (final story in stories) ...[
+                  const SizedBox(width: 12),
+                  _StoryTile(
+                    label: () {
+                      final u = story['user'] as Map<String, dynamic>?;
+                      return '${u?['display_name'] ?? u?['username'] ?? 'Trader'}';
+                    }(),
+                    avatarUrl: () {
+                      final u = story['user'] as Map<String, dynamic>?;
+                      return '${u?['avatar_url'] ?? ''}';
+                    }(),
+                    isMe: false,
+                    hasStory: true,
+                    viewed: story['viewed_by_me'] == true,
+                    onTap: () => onStoryTap(story),
+                  ),
+                ],
+              ],
+            ),
+    );
+  }
+}
+
+class _StoryTile extends StatelessWidget {
+  const _StoryTile({
+    required this.label,
+    required this.avatarUrl,
+    required this.isMe,
+    required this.hasStory,
+    required this.viewed,
+    required this.onTap,
+  });
+
+  final String label;
+  final String avatarUrl;
+  final bool isMe;
+  final bool hasStory;
+  final bool viewed;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final ringColor = viewed
+        ? AppTheme.muted
+        : isMe && !hasStory
+            ? AppTheme.border
+            : AppTheme.primary;
+
+    return GestureDetector(
+      onTap: onTap,
+      child: SizedBox(
+        width: 62,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Stack(
+              alignment: Alignment.bottomRight,
+              children: [
+                Container(
+                  width: 56,
+                  height: 56,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: ringColor,
+                      width: hasStory || isMe ? 2.5 : 0,
+                    ),
+                  ),
+                  padding: const EdgeInsets.all(2),
+                  child: ClipOval(
+                    child: isMe && !hasStory
+                        ? Container(
+                            color: AppTheme.elevated,
+                            child: const Icon(Icons.add_rounded,
+                                color: AppTheme.primary, size: 26),
+                          )
+                        : AssetAvatar(
+                            label: label,
+                            imageUrl: avatarUrl,
+                            size: 48,
+                          ),
+                  ),
+                ),
+                if (isMe && !hasStory)
+                  Positioned(
+                    right: 0,
+                    bottom: 0,
+                    child: Container(
+                      width: 18,
+                      height: 18,
+                      decoration: const BoxDecoration(
+                        color: AppTheme.primary,
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(Icons.add, color: Colors.white, size: 12),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              isMe ? 'My Story' : label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+                color: viewed ? AppTheme.muted : AppTheme.text,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

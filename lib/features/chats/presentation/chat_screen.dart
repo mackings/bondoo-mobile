@@ -208,9 +208,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       final path = await recorder.stop();
       if (path == null) return;
       final file = File(path);
+      // recorder.stop() returns before the OS finishes writing the M4A moov/mdat
+      // atoms — the file starts as a 28-byte ftyp stub. Poll until it grows.
+      for (var i = 0; i < 20 && (await file.length()) <= 28; i++) {
+        await Future.delayed(const Duration(milliseconds: 100));
+      }
       final bytes = await file.readAsBytes();
+      debugPrint('[VoiceNote] recording size: ${bytes.length} bytes');
       try { await file.delete(); } catch (_) {}
-      if (bytes.isEmpty || recordingMs < 500) throw Exception('Voice note is too short.');
+      if (bytes.length <= 100 || recordingMs < 500) throw Exception('Voice note is too short.');
       final audioDataUrl = 'data:audio/mp4;base64,${base64Encode(bytes)}';
       await ref.read(chatRepositoryProvider).sendVoiceNote(
         conversationId: id,
@@ -771,6 +777,7 @@ class VoiceNoteBubble extends StatefulWidget {
 class _VoiceNoteBubbleState extends State<VoiceNoteBubble> {
   final player = AudioPlayer();
   bool playing = false;
+  String? _tempPath;
 
   @override
   void initState() {
@@ -783,6 +790,9 @@ class _VoiceNoteBubbleState extends State<VoiceNoteBubble> {
   @override
   void dispose() {
     player.dispose();
+    if (_tempPath != null) {
+      try { File(_tempPath!).deleteSync(); } catch (_) {}
+    }
     super.dispose();
   }
 
@@ -792,13 +802,21 @@ class _VoiceNoteBubbleState extends State<VoiceNoteBubble> {
       if (mounted) setState(() => playing = false);
       return;
     }
-    final comma = widget.audioDataUrl.indexOf(',');
-    if (comma < 0) return;
-    final meta = widget.audioDataUrl.substring(0, comma);
-    final bytes = base64Decode(widget.audioDataUrl.substring(comma + 1));
-    final mimeType = meta.contains('audio/mp4') ? 'audio/mp4' : null;
-    await player.play(BytesSource(bytes, mimeType: mimeType));
-    if (mounted) setState(() => playing = true);
+    try {
+      final comma = widget.audioDataUrl.indexOf(',');
+      if (comma < 0) return;
+      final bytes = base64Decode(widget.audioDataUrl.substring(comma + 1));
+      if (_tempPath == null) {
+        final dir = await getTemporaryDirectory();
+        _tempPath = '${dir.path}/bondoo_vn_${DateTime.now().millisecondsSinceEpoch}.m4a';
+        await File(_tempPath!).writeAsBytes(bytes);
+      }
+      debugPrint('[VoiceNote] file size: ${bytes.length} bytes → $_tempPath');
+      await player.play(DeviceFileSource(_tempPath!));
+      if (mounted) setState(() => playing = true);
+    } catch (e) {
+      debugPrint('[VoiceNote] playback error: $e');
+    }
   }
 
   @override

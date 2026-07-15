@@ -96,6 +96,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         .where((msg) => '${msg['conversation_id']}' == id)
         .listen((msg) {
       if (!mounted) return;
+      // Deduplicate — the real message replaces any optimistic copy by ID
+      if (_messages.any((m) => m['id'] == msg['id'])) return;
       setState(() => _messages.add(msg));
       WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToEnd());
       unawaited(ref.read(chatRepositoryProvider).markRead(id));
@@ -104,23 +106,43 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
   Future<void> send() async {
     final body = text.text.trim();
-    if (body.isEmpty || sending) return;
+    if (body.isEmpty) return;
+
+    // Optimistic: show message immediately with a pending (clock) indicator
+    final myId = ref.read(authControllerProvider).user?['id'] as String?;
+    final tempId = 'pending_${DateTime.now().millisecondsSinceEpoch}';
     text.clear();
-    setState(() => sending = true);
+    setState(() {
+      _messages.add({
+        'id': tempId,
+        'conversation_id': id,
+        'sender_id': myId,
+        'kind': 'text',
+        'body': body,
+        'read_by': <dynamic>[],
+        'created_at': DateTime.now().toUtc().toIso8601String(),
+        '_pending': true,
+      });
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToEnd());
+
     try {
       if (_socketSvc.connected) {
-        // Server broadcasts new_message back to the room; our WS listener appends it
         await _socketSvc.sendText(id, body);
+        // WS listener already added the real message; drop the optimistic copy
       } else {
         await ref.read(chatRepositoryProvider).sendMessage(id, body);
         await _loadMessages(silent: true);
       }
     } catch (error) {
-      text.text = body;
-      if (mounted) showError(context, error);
-    } finally {
-      if (mounted) setState(() => sending = false);
+      if (mounted) {
+        setState(() => _messages.removeWhere((m) => m['id'] == tempId));
+        text.text = body;
+        showError(context, error);
+      }
+      return;
     }
+    if (mounted) setState(() => _messages.removeWhere((m) => m['id'] == tempId));
   }
 
   Future<void> startCall({required bool video}) async {
@@ -538,7 +560,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         final mine = message['sender_id'] == ref.read(authControllerProvider).user?['id'];
         final time = messageTime(message['created_at']);
         final readReceipt = mine
-            ? readReceiptLabel(message, ref.read(authControllerProvider).user?['id'] as String?)
+            ? (message['_pending'] == true
+                ? 'Pending'
+                : readReceiptLabel(message, ref.read(authControllerProvider).user?['id'] as String?))
             : null;
 
         if (message['kind'] == 'trade_update') {
@@ -583,13 +607,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                         Text(time, style: const TextStyle(color: AppTheme.muted, fontSize: 10.5, fontWeight: FontWeight.w600, height: 1)),
                         if (readReceipt != null) ...[
                           const SizedBox(width: 5),
-                          Icon(
-                            readReceipt == 'Read' ? Icons.done_all_rounded : Icons.done_rounded,
-                            size: 14,
-                            color: readReceipt == 'Read' ? AppTheme.accent : AppTheme.muted,
-                          ),
-                          const SizedBox(width: 2),
-                          Text(readReceipt, style: TextStyle(color: readReceipt == 'Read' ? AppTheme.accent : AppTheme.muted, fontSize: 10.5, fontWeight: FontWeight.w700, height: 1)),
+                          if (readReceipt == 'Pending')
+                            const Icon(Icons.access_time_rounded, size: 13, color: AppTheme.muted)
+                          else ...[
+                            Icon(
+                              readReceipt == 'Read' ? Icons.done_all_rounded : Icons.done_rounded,
+                              size: 14,
+                              color: readReceipt == 'Read' ? AppTheme.accent : AppTheme.muted,
+                            ),
+                            const SizedBox(width: 2),
+                            Text(readReceipt, style: TextStyle(color: readReceipt == 'Read' ? AppTheme.accent : AppTheme.muted, fontSize: 10.5, fontWeight: FontWeight.w700, height: 1)),
+                          ],
                         ],
                       ],
                     ),
@@ -690,21 +718,25 @@ class MessageBubbleBody extends StatelessWidget {
                 ),
               if (readReceipt != null) ...[
                 if (timestamp.isNotEmpty) const SizedBox(width: 5),
-                Icon(
-                  readReceipt == 'Read' ? Icons.done_all_rounded : Icons.done_rounded,
-                  size: 14,
-                  color: readReceipt == 'Read' ? AppTheme.accent : Colors.white.withValues(alpha: 0.72),
-                ),
-                const SizedBox(width: 2),
-                Text(
-                  readReceipt!,
-                  style: TextStyle(
-                    color: readReceipt == 'Read' ? AppTheme.accent : timeColor,
-                    fontSize: 10.5,
-                    fontWeight: FontWeight.w700,
-                    height: 1,
+                if (readReceipt == 'Pending')
+                  Icon(Icons.access_time_rounded, size: 13, color: timeColor)
+                else ...[
+                  Icon(
+                    readReceipt == 'Read' ? Icons.done_all_rounded : Icons.done_rounded,
+                    size: 14,
+                    color: readReceipt == 'Read' ? AppTheme.accent : Colors.white.withValues(alpha: 0.72),
                   ),
-                ),
+                  const SizedBox(width: 2),
+                  Text(
+                    readReceipt!,
+                    style: TextStyle(
+                      color: readReceipt == 'Read' ? AppTheme.accent : timeColor,
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w700,
+                      height: 1,
+                    ),
+                  ),
+                ],
               ],
             ],
           ),

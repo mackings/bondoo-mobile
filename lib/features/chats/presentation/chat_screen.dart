@@ -10,9 +10,10 @@ import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
 
+import '../../../core/config/app_config.dart';
+import '../../../core/network/socket_service.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../shared/widgets/api_feedback.dart';
-import '../../../shared/widgets/async_state_view.dart';
 import '../../../shared/widgets/exchange_ui.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../calls/data/call_repository.dart';
@@ -39,11 +40,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   final recorder = AudioRecorder();
   final imagePicker = ImagePicker();
   final _scrollCtrl = ScrollController();
-  late Future<List<dynamic>> future = load();
+  final _socketSvc = SocketService();
+  List<Map<String, dynamic>> _messages = [];
+  bool _loading = true;
+  String? _loadError;
+  StreamSubscription<Map<String, dynamic>>? _msgSub;
   bool sending = false;
   bool transferring = false;
   bool recording = false;
-  bool guidanceShown = false;
   bool startingCall = false;
   int recordingMs = 0;
   Timer? recordingTimer;
@@ -54,11 +58,48 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     currentUserId: ref.read(authControllerProvider).user?['id'] as String?,
   );
 
-  Future<List<dynamic>> load() async {
-    final repo = ref.read(chatRepositoryProvider);
-    final messages = await repo.messages(id);
-    unawaited(repo.markRead(id));
-    return messages;
+  @override
+  void initState() {
+    super.initState();
+    _loadMessages().then((_) { if (mounted) _initSocket(); });
+  }
+
+  Future<void> _loadMessages({bool silent = false}) async {
+    if (!silent && mounted) setState(() { _loading = true; _loadError = null; });
+    try {
+      final repo = ref.read(chatRepositoryProvider);
+      final msgs = await repo.messages(id);
+      unawaited(repo.markRead(id));
+      if (mounted) {
+        setState(() {
+          _messages = msgs.cast<Map<String, dynamic>>();
+          _loading = false;
+        });
+        WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToEnd());
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          if (!silent) _loadError = '$e';
+          _loading = false;
+        });
+      }
+    }
+  }
+
+  void _initSocket() {
+    final token = ref.read(authControllerProvider).token;
+    if (token == null) return;
+    _socketSvc.connect(token, AppConfig.apiBaseUrl);
+    _socketSvc.join(id);
+    _msgSub = _socketSvc.onNewMessage
+        .where((msg) => '${msg['conversation_id']}' == id)
+        .listen((msg) {
+      if (!mounted) return;
+      setState(() => _messages.add(msg));
+      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToEnd());
+      unawaited(ref.read(chatRepositoryProvider).markRead(id));
+    });
   }
 
   Future<void> send() async {
@@ -67,27 +108,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     text.clear();
     setState(() => sending = true);
     try {
-      await ref.read(chatRepositoryProvider).sendMessage(id, body);
-      setState(() {
-        future = load();
-      });
+      if (_socketSvc.connected) {
+        // Server broadcasts new_message back to the room; our WS listener appends it
+        await _socketSvc.sendText(id, body);
+      } else {
+        await ref.read(chatRepositoryProvider).sendMessage(id, body);
+        await _loadMessages(silent: true);
+      }
     } catch (error) {
       text.text = body;
-      if (mounted) showError(context, error);
-    } finally {
-      if (mounted) setState(() => sending = false);
-    }
-  }
-
-  Future<void> sendQuickMessage(String body) async {
-    if (sending) return;
-    setState(() => sending = true);
-    try {
-      await ref.read(chatRepositoryProvider).sendMessage(id, body);
-      setState(() {
-        future = load();
-      });
-    } catch (error) {
       if (mounted) showError(context, error);
     } finally {
       if (mounted) setState(() => sending = false);
@@ -121,30 +150,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     if (sending || recording) return;
     try {
       if (!await recorder.hasPermission()) {
-        if (mounted) {
-          showApiError(
-            context,
-            'Allow microphone access to record voice notes.',
-          );
-        }
+        if (mounted) showApiError(context, 'Allow microphone access to record voice notes.');
         return;
       }
       final dir = await getTemporaryDirectory();
-      final path =
-          '${dir.path}/bondoo-voice-${DateTime.now().microsecondsSinceEpoch}.m4a';
+      final path = '${dir.path}/bondoo-voice-${DateTime.now().microsecondsSinceEpoch}.m4a';
       await recorder.start(
-        const RecordConfig(
-          encoder: AudioEncoder.aacLc,
-          bitRate: 64000,
-          numChannels: 1,
-        ),
+        const RecordConfig(encoder: AudioEncoder.aacLc, bitRate: 64000, numChannels: 1),
         path: path,
       );
       recordingTimer?.cancel();
-      setState(() {
-        recording = true;
-        recordingMs = 0;
-      });
+      setState(() { recording = true; recordingMs = 0; });
       recordingTimer = Timer.periodic(const Duration(seconds: 1), (_) {
         if (mounted) setState(() => recordingMs += 1000);
       });
@@ -157,16 +173,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     recordingTimer?.cancel();
     final path = await recorder.stop();
     if (path != null) {
-      try {
-        await File(path).delete();
-      } catch (_) {}
+      try { await File(path).delete(); } catch (_) {}
     }
-    if (mounted) {
-      setState(() {
-        recording = false;
-        recordingMs = 0;
-      });
-    }
+    if (mounted) setState(() { recording = false; recordingMs = 0; });
   }
 
   Future<void> stopAndSendVoiceNote() async {
@@ -178,33 +187,20 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       if (path == null) return;
       final file = File(path);
       final bytes = await file.readAsBytes();
-      try {
-        await file.delete();
-      } catch (_) {}
-      if (bytes.isEmpty || recordingMs < 500) {
-        throw Exception('Voice note is too short.');
-      }
+      try { await file.delete(); } catch (_) {}
+      if (bytes.isEmpty || recordingMs < 500) throw Exception('Voice note is too short.');
       final audioDataUrl = 'data:audio/mp4;base64,${base64Encode(bytes)}';
-      await ref
-          .read(chatRepositoryProvider)
-          .sendVoiceNote(
-            conversationId: id,
-            audioDataUrl: audioDataUrl,
-            durationMs: recordingMs,
-          );
-      setState(() {
-        future = load();
-      });
+      await ref.read(chatRepositoryProvider).sendVoiceNote(
+        conversationId: id,
+        audioDataUrl: audioDataUrl,
+        durationMs: recordingMs,
+      );
+      // Server broadcasts new_message via WS; fallback: reload
+      if (!_socketSvc.connected) await _loadMessages(silent: true);
     } catch (error) {
       if (mounted) showError(context, error);
     } finally {
-      if (mounted) {
-        setState(() {
-          sending = false;
-          recording = false;
-          recordingMs = 0;
-        });
-      }
+      if (mounted) setState(() { sending = false; recording = false; recordingMs = 0; });
     }
   }
 
@@ -218,54 +214,19 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       );
       if (image == null) return;
       final bytes = await image.readAsBytes();
-      if (bytes.isEmpty) {
-        throw Exception('Selected image is empty.');
-      }
+      if (bytes.isEmpty) throw Exception('Selected image is empty.');
       final mimeType = image.mimeType ?? _imageMimeType(image.name);
       final imageDataUrl = 'data:$mimeType;base64,${base64Encode(bytes)}';
-      if (imageDataUrl.length > 4_000_000) {
-        throw Exception('Image is too large. Please choose a smaller image.');
-      }
+      if (imageDataUrl.length > 4_000_000) throw Exception('Image is too large. Please choose a smaller image.');
       setState(() => sending = true);
-      await ref
-          .read(chatRepositoryProvider)
-          .sendImage(conversationId: id, imageDataUrl: imageDataUrl);
-      setState(() {
-        future = load();
-      });
+      await ref.read(chatRepositoryProvider).sendImage(conversationId: id, imageDataUrl: imageDataUrl);
+      // Server broadcasts new_message via WS; fallback: reload
+      if (!_socketSvc.connected) await _loadMessages(silent: true);
     } catch (error) {
       if (mounted) showError(context, error);
     } finally {
       if (mounted) setState(() => sending = false);
     }
-  }
-
-  void maybeShowTradeGuidance(List<dynamic> messages) {
-    if (guidanceShown || messages.isEmpty) return;
-    Map? offer;
-    for (final message in messages.cast<Map>()) {
-      if (message['kind'] == 'offer') {
-        offer = message['offer'] as Map?;
-        break;
-      }
-    }
-    if (offer == null) return;
-    guidanceShown = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      showModalBottomSheet<void>(
-        context: context,
-        isScrollControlled: true,
-        showDragHandle: true,
-        backgroundColor: AppTheme.surface,
-        builder: (_) => TradeGuidanceSheet(
-          offer: offer!,
-          currentUserId:
-              ref.read(authControllerProvider).user?['id'] as String?,
-          onSend: sendQuickMessage,
-        ),
-      );
-    });
   }
 
   Future<void> transfer() async {
@@ -278,24 +239,19 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     if (payload == null) return;
     setState(() => transferring = true);
     try {
-      await ref
-          .read(chatRepositoryProvider)
-          .sendTransfer(
-            conversationId: id,
-            recipientId: recipient,
-            asset: payload.asset,
-            amount: payload.amount,
-            note: payload.note,
-          );
-      setState(() {
-        future = load();
-      });
+      await ref.read(chatRepositoryProvider).sendTransfer(
+        conversationId: id,
+        recipientId: recipient,
+        asset: payload.asset,
+        amount: payload.amount,
+        note: payload.note,
+      );
+      if (!_socketSvc.connected) await _loadMessages(silent: true);
       if (mounted) {
         await showApiSuccess(
           context,
           title: 'Transfer sent',
-          message:
-              '${payload.amount} ${payload.asset} was sent to ${meta.title}.',
+          message: '${payload.amount} ${payload.asset} was sent to ${meta.title}.',
         );
       }
     } catch (error) {
@@ -312,6 +268,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
   @override
   void dispose() {
+    _msgSub?.cancel();
+    _socketSvc.leave(id);
     recordingTimer?.cancel();
     recorder.dispose();
     text.dispose();
@@ -335,11 +293,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                   Text(meta.title, style: const TextStyle(fontSize: 17)),
                   const Text(
                     'Secure conversation',
-                    style: TextStyle(
-                      color: AppTheme.muted,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w500,
-                    ),
+                    style: TextStyle(color: AppTheme.muted, fontSize: 11, fontWeight: FontWeight.w500),
                   ),
                 ],
               ),
@@ -370,409 +324,334 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         ),
         child: Column(
           children: [
-            Expanded(
-              child: FutureBuilder<List<dynamic>>(
-                future: future,
-                builder: (context, snapshot) => AsyncStateView<List<dynamic>>(
-                  snapshot: snapshot,
-                  onRetry: () => setState(() {
-                    future = load();
-                  }),
-                  builder: (messages) {
-                    maybeShowTradeGuidance(messages);
-                    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToEnd());
-                    return messages.isEmpty
-                        ? const EmptyState(
-                            icon: Icons.waving_hand_outlined,
-                            title: 'Say hello',
-                            message:
-                                'Send the first message in this conversation.',
-                          )
-                        : ListView.builder(
-                            controller: _scrollCtrl,
-                            padding: const EdgeInsets.fromLTRB(16, 12, 16, 18),
-                            itemCount: messages.length,
-                            itemBuilder: (context, index) {
-                              final message = messages[index] as Map;
-                              final mine =
-                                  message['sender_id'] ==
-                                  ref.read(authControllerProvider).user?['id'];
-                              final time = messageTime(message['created_at']);
-                              final readReceipt = mine
-                                  ? readReceiptLabel(
-                                      message,
-                                      ref
-                                              .read(authControllerProvider)
-                                              .user?['id']
-                                          as String?,
-                                    )
-                                  : null;
-
-                              // Trade update — centered system message
-                              if (message['kind'] == 'trade_update') {
-                                return Padding(
-                                  padding: const EdgeInsets.only(bottom: 8),
-                                  child: Center(
-                                    child: Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                                      decoration: BoxDecoration(
-                                        color: AppTheme.elevated,
-                                        borderRadius: BorderRadius.circular(20),
-                                        border: Border.all(color: AppTheme.border),
-                                      ),
-                                      child: TradeUpdateCard(
-                                        body: '${message['body'] ?? ''}',
-                                        trade: message['trade'] as Map?,
-                                      ),
-                                    ),
-                                  ),
-                                );
-                              }
-
-                              // Image messages: no bubble background, image fills its own shape
-                              if (message['kind'] == 'image') {
-                                return Padding(
-                                  padding: const EdgeInsets.only(bottom: 8),
-                                  child: Align(
-                                    alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
-                                    child: Column(
-                                      mainAxisSize: MainAxisSize.min,
-                                      crossAxisAlignment: mine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-                                      children: [
-                                        ImageMessageBubble(
-                                          imageDataUrl: '${message['image_data_url'] ?? ''}',
-                                          mine: mine,
-                                        ),
-                                        const SizedBox(height: 3),
-                                        Padding(
-                                          padding: const EdgeInsets.symmetric(horizontal: 4),
-                                          child: Row(
-                                            mainAxisSize: MainAxisSize.min,
-                                            children: [
-                                              Text(time, style: const TextStyle(color: AppTheme.muted, fontSize: 10.5, fontWeight: FontWeight.w600, height: 1)),
-                                              if (readReceipt != null) ...[
-                                                const SizedBox(width: 5),
-                                                Icon(
-                                                  readReceipt == 'Read' ? Icons.done_all_rounded : Icons.done_rounded,
-                                                  size: 14,
-                                                  color: readReceipt == 'Read' ? AppTheme.accent : AppTheme.muted,
-                                                ),
-                                                const SizedBox(width: 2),
-                                                Text(readReceipt, style: TextStyle(color: readReceipt == 'Read' ? AppTheme.accent : AppTheme.muted, fontSize: 10.5, fontWeight: FontWeight.w700, height: 1)),
-                                              ],
-                                            ],
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                );
-                              }
-
-                              return Align(
-                                alignment: mine
-                                    ? Alignment.centerRight
-                                    : Alignment.centerLeft,
-                                child: Container(
-                                  constraints: BoxConstraints(
-                                    maxWidth:
-                                        MediaQuery.sizeOf(context).width * 0.76,
-                                  ),
-                                  margin: const EdgeInsets.only(bottom: 8),
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 15,
-                                    vertical: 11,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: mine
-                                        ? AppTheme.primary.withValues(
-                                            alpha: 0.9,
-                                          )
-                                        : AppTheme.surface,
-                                    borderRadius: BorderRadius.only(
-                                      topLeft: const Radius.circular(20),
-                                      topRight: const Radius.circular(20),
-                                      bottomLeft: Radius.circular(
-                                        mine ? 20 : 5,
-                                      ),
-                                      bottomRight: Radius.circular(
-                                        mine ? 5 : 20,
-                                      ),
-                                    ),
-                                    border: mine
-                                        ? null
-                                        : Border.all(color: AppTheme.border),
-                                  ),
-                                  child: MessageBubbleBody(
-                                    mine: mine,
-                                    timestamp: time,
-                                    readReceipt: readReceipt,
-                                    child: message['kind'] == 'offer'
-                                        ? OfferMessageCard(
-                                            offer:
-                                                (message['offer'] as Map?) ??
-                                                const {},
-                                          )
-                                        : message['kind'] == 'trade_proposal'
-                                        ? TradeProposalCard(
-                                            trade: (message['trade'] as Map?) ?? const {},
-                                          )
-                                        : message['kind'] == 'voice'
-                                        ? VoiceNoteBubble(
-                                            audioDataUrl:
-                                                '${message['voice_data_url'] ?? ''}',
-                                            durationMs:
-                                                message['voice_duration_ms']
-                                                    as int? ??
-                                                0,
-                                            mine: mine,
-                                          )
-                                        : message['kind'] == 'transfer'
-                                        ? Row(
-                                            mainAxisSize: MainAxisSize.min,
-                                            children: [
-                                              const Icon(
-                                                Icons.north_east_rounded,
-                                                size: 18,
-                                              ),
-                                              const SizedBox(width: 8),
-                                              Flexible(
-                                                child: Text(
-                                                  '${mine ? 'Sent' : 'Received'} ${message['transfer_amount']} ${message['transfer_asset']}\n${message['transfer_note'] ?? ''}',
-                                                  style: const TextStyle(
-                                                    height: 1.35,
-                                                  ),
-                                                ),
-                                              ),
-                                            ],
-                                          )
-                                        : Text('${message['body'] ?? ''}', style: TextStyle(color: mine ? Colors.white : AppTheme.text, height: 1.4)),
-                                  ),
-                                ),
-                              );
-                            },
-                          );
-                  },
-                ),
-              ),
-            ),
+            Expanded(child: _buildMessageList()),
             SafeArea(
               top: false,
               child: Container(
                 padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
-                decoration: BoxDecoration(
-                  color: AppTheme.surface.withValues(alpha: 0.98),
-                  border: const Border(top: BorderSide(color: AppTheme.border)),
+                decoration: const BoxDecoration(
+                  color: AppTheme.surface,
+                  border: Border(top: BorderSide(color: AppTheme.border)),
                 ),
-                child: recording
-                    ? Row(
-                        children: [
-                          Expanded(
-                            child: Container(
-                              height: 48,
-                              padding: const EdgeInsets.only(left: 14),
-                              decoration: BoxDecoration(
-                                color: AppTheme.elevated.withValues(
-                                  alpha: 0.72,
-                                ),
-                                borderRadius: BorderRadius.circular(24),
-                                border: Border.all(color: AppTheme.border),
-                              ),
-                              child: Row(
-                                children: [
-                                  const Icon(
-                                    Icons.fiber_manual_record_rounded,
-                                    color: AppTheme.danger,
-                                    size: 13,
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Expanded(
-                                    child: Text(
-                                      'Recording ${formatDuration(recordingMs)}',
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
-                                        color: AppTheme.text,
-                                        fontWeight: FontWeight.w800,
-                                      ),
-                                    ),
-                                  ),
-                                  IconButton(
-                                    tooltip: 'Cancel',
-                                    onPressed: cancelVoiceNote,
-                                    icon: const Icon(Icons.close_rounded),
-                                    style: IconButton.styleFrom(
-                                      backgroundColor: Colors.transparent,
-                                      foregroundColor: AppTheme.muted,
-                                      minimumSize: const Size.square(40),
-                                      tapTargetSize:
-                                          MaterialTapTargetSize.shrinkWrap,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          IconButton(
-                            tooltip: 'Send voice note',
-                            onPressed: sending ? null : stopAndSendVoiceNote,
-                            style: IconButton.styleFrom(
-                              backgroundColor: AppTheme.primary,
-                              foregroundColor: Colors.white,
-                              minimumSize: const Size.square(48),
-                              shape: const CircleBorder(),
-                            ),
-                            icon: sending
-                                ? const SizedBox.square(
-                                    dimension: 18,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: Colors.white,
-                                    ),
-                                  )
-                                : const Icon(Icons.send_rounded),
-                          ),
-                        ],
-                      )
-                    : Row(
-                        children: [
-                          IconButton(
-                            tooltip: 'Send crypto',
-                            onPressed: transferring ? null : transfer,
-                            style: IconButton.styleFrom(
-                              backgroundColor: Colors.transparent,
-                              foregroundColor: AppTheme.muted,
-                              minimumSize: const Size.square(40),
-                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                            ),
-                            icon: transferring
-                                ? const SizedBox.square(
-                                    dimension: 18,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                    ),
-                                  )
-                                : const Icon(Icons.currency_exchange_rounded),
-                          ),
-                          if (meta.otherId != null)
-                            IconButton(
-                              tooltip: 'Propose trade',
-                              onPressed: () => showProposeTradeDialog(
-                                context: context,
-                                ref: ref,
-                                conversationId: id,
-                                sellerUserId: meta.otherId!,
-                                sellerName: meta.title,
-                                onProposed: () => setState(() { future = load(); }),
-                              ),
-                              style: IconButton.styleFrom(
-                                backgroundColor: Colors.transparent,
-                                foregroundColor: AppTheme.accent,
-                                minimumSize: const Size.square(40),
-                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                              ),
-                              icon: const Icon(Icons.handshake_rounded),
-                            ),
-                          const SizedBox(width: 4),
-                          Expanded(
-                            child: Container(
-                              constraints: const BoxConstraints(minHeight: 48),
-                              padding: const EdgeInsets.only(
-                                left: 16,
-                                right: 4,
-                              ),
-                              decoration: BoxDecoration(
-                                color: AppTheme.elevated.withValues(
-                                  alpha: 0.72,
-                                ),
-                                borderRadius: BorderRadius.circular(24),
-                                border: Border.all(color: AppTheme.border),
-                              ),
-                              child: Row(
-                                children: [
-                                  Expanded(
-                                    child: TextField(
-                                      controller: text,
-                                      minLines: 1,
-                                      maxLines: 4,
-                                      decoration: const InputDecoration(
-                                        hintText: 'Message',
-                                        border: InputBorder.none,
-                                        enabledBorder: InputBorder.none,
-                                        focusedBorder: InputBorder.none,
-                                        disabledBorder: InputBorder.none,
-                                        isDense: true,
-                                        filled: false,
-                                        contentPadding: EdgeInsets.symmetric(
-                                          vertical: 13,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                  IconButton(
-                                    tooltip: 'Share image',
-                                    onPressed: sending
-                                        ? null
-                                        : pickAndSendImage,
-                                    style: IconButton.styleFrom(
-                                      backgroundColor: Colors.transparent,
-                                      foregroundColor: AppTheme.muted,
-                                      minimumSize: const Size.square(40),
-                                      tapTargetSize:
-                                          MaterialTapTargetSize.shrinkWrap,
-                                    ),
-                                    icon: const Icon(Icons.image_rounded),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          ValueListenableBuilder<TextEditingValue>(
-                            valueListenable: text,
-                            builder: (context, value, _) {
-                              final hasText = value.text.trim().isNotEmpty;
-                              return IconButton(
-                                tooltip: hasText
-                                    ? 'Send message'
-                                    : 'Record voice note',
-                                onPressed: sending
-                                    ? null
-                                    : hasText
-                                    ? send
-                                    : startVoiceNote,
-                                style: IconButton.styleFrom(
-                                  backgroundColor: AppTheme.primary,
-                                  foregroundColor: Colors.white,
-                                  disabledBackgroundColor: AppTheme.primary
-                                      .withValues(alpha: 0.32),
-                                  minimumSize: const Size.square(48),
-                                  shape: const CircleBorder(),
-                                ),
-                                icon: sending
-                                    ? const SizedBox.square(
-                                        dimension: 18,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                          color: Colors.white,
-                                        ),
-                                      )
-                                    : Icon(
-                                        hasText
-                                            ? Icons.send_rounded
-                                            : Icons.mic_rounded,
-                                      ),
-                              );
-                            },
-                          ),
-                        ],
-                      ),
+                child: recording ? _buildRecordingBar() : _buildInputBar(),
               ),
             ),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildRecordingBar() {
+    return Row(
+      children: [
+        Expanded(
+          child: Container(
+            height: 52,
+            padding: const EdgeInsets.only(left: 14),
+            decoration: BoxDecoration(
+              color: AppTheme.elevated,
+              borderRadius: BorderRadius.circular(26),
+              border: Border.all(color: AppTheme.border),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.fiber_manual_record_rounded, color: AppTheme.danger, size: 13),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Recording ${formatDuration(recordingMs)}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: AppTheme.text, fontWeight: FontWeight.w800),
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Cancel',
+                  onPressed: cancelVoiceNote,
+                  icon: const Icon(Icons.close_rounded),
+                  style: IconButton.styleFrom(
+                    backgroundColor: Colors.transparent,
+                    foregroundColor: AppTheme.muted,
+                    minimumSize: const Size.square(40),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        IconButton(
+          tooltip: 'Send voice note',
+          onPressed: sending ? null : stopAndSendVoiceNote,
+          style: IconButton.styleFrom(
+            backgroundColor: AppTheme.primary,
+            foregroundColor: Colors.white,
+            minimumSize: const Size.square(48),
+            shape: const CircleBorder(),
+          ),
+          icon: sending
+              ? const SizedBox.square(dimension: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+              : const Icon(Icons.send_rounded),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildInputBar() {
+    return Row(
+      children: [
+        IconButton(
+          tooltip: 'Send crypto',
+          onPressed: transferring ? null : transfer,
+          style: IconButton.styleFrom(
+            backgroundColor: Colors.transparent,
+            foregroundColor: AppTheme.muted,
+            minimumSize: const Size.square(40),
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          ),
+          icon: transferring
+              ? const SizedBox.square(dimension: 18, child: CircularProgressIndicator(strokeWidth: 2))
+              : const Icon(Icons.currency_exchange_rounded),
+        ),
+        if (meta.otherId != null)
+          IconButton(
+            tooltip: 'Propose trade',
+            onPressed: () => showProposeTradeDialog(
+              context: context,
+              ref: ref,
+              conversationId: id,
+              sellerUserId: meta.otherId!,
+              sellerName: meta.title,
+              onProposed: () {
+                if (!_socketSvc.connected) _loadMessages(silent: true);
+              },
+            ),
+            style: IconButton.styleFrom(
+              backgroundColor: Colors.transparent,
+              foregroundColor: AppTheme.accent,
+              minimumSize: const Size.square(40),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            icon: const Icon(Icons.handshake_rounded),
+          ),
+        const SizedBox(width: 4),
+        Expanded(
+          child: Container(
+            constraints: const BoxConstraints(minHeight: 52),
+            padding: const EdgeInsets.only(left: 16, right: 4),
+            decoration: BoxDecoration(
+              color: AppTheme.elevated,
+              borderRadius: BorderRadius.circular(26),
+              border: Border.all(color: AppTheme.border),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: text,
+                    minLines: 1,
+                    maxLines: 4,
+                    decoration: const InputDecoration(
+                      hintText: 'Message',
+                      border: InputBorder.none,
+                      enabledBorder: InputBorder.none,
+                      focusedBorder: InputBorder.none,
+                      disabledBorder: InputBorder.none,
+                      isDense: true,
+                      filled: false,
+                      contentPadding: EdgeInsets.symmetric(vertical: 15),
+                    ),
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Share image',
+                  onPressed: sending ? null : pickAndSendImage,
+                  style: IconButton.styleFrom(
+                    backgroundColor: Colors.transparent,
+                    foregroundColor: AppTheme.muted,
+                    minimumSize: const Size.square(40),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                  icon: const Icon(Icons.image_rounded),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        ValueListenableBuilder<TextEditingValue>(
+          valueListenable: text,
+          builder: (context, value, _) {
+            final hasText = value.text.trim().isNotEmpty;
+            return IconButton(
+              tooltip: hasText ? 'Send message' : 'Record voice note',
+              onPressed: sending ? null : (hasText ? send : startVoiceNote),
+              style: IconButton.styleFrom(
+                backgroundColor: AppTheme.primary,
+                foregroundColor: Colors.white,
+                disabledBackgroundColor: AppTheme.primary.withValues(alpha: 0.32),
+                minimumSize: const Size.square(48),
+                shape: const CircleBorder(),
+              ),
+              icon: sending
+                  ? const SizedBox.square(dimension: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                  : Icon(hasText ? Icons.send_rounded : Icons.mic_rounded),
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMessageList() {
+    if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_loadError != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(_loadError!, textAlign: TextAlign.center, style: const TextStyle(color: AppTheme.muted)),
+              const SizedBox(height: 16),
+              FilledButton(onPressed: _loadMessages, child: const Text('Retry')),
+            ],
+          ),
+        ),
+      );
+    }
+    if (_messages.isEmpty) {
+      return const EmptyState(
+        icon: Icons.waving_hand_outlined,
+        title: 'Say hello',
+        message: 'Send the first message in this conversation.',
+      );
+    }
+    return ListView.builder(
+      controller: _scrollCtrl,
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 18),
+      itemCount: _messages.length,
+      itemBuilder: (context, index) {
+        final message = _messages[index];
+        final mine = message['sender_id'] == ref.read(authControllerProvider).user?['id'];
+        final time = messageTime(message['created_at']);
+        final readReceipt = mine
+            ? readReceiptLabel(message, ref.read(authControllerProvider).user?['id'] as String?)
+            : null;
+
+        if (message['kind'] == 'trade_update') {
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Center(
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                decoration: BoxDecoration(
+                  color: AppTheme.elevated,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: AppTheme.border),
+                ),
+                child: TradeUpdateCard(
+                  body: '${message['body'] ?? ''}',
+                  trade: message['trade'] as Map?,
+                ),
+              ),
+            ),
+          );
+        }
+
+        if (message['kind'] == 'image') {
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Align(
+              alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: mine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+                children: [
+                  ImageMessageBubble(
+                    imageDataUrl: '${message['image_data_url'] ?? ''}',
+                    mine: mine,
+                  ),
+                  const SizedBox(height: 3),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(time, style: const TextStyle(color: AppTheme.muted, fontSize: 10.5, fontWeight: FontWeight.w600, height: 1)),
+                        if (readReceipt != null) ...[
+                          const SizedBox(width: 5),
+                          Icon(
+                            readReceipt == 'Read' ? Icons.done_all_rounded : Icons.done_rounded,
+                            size: 14,
+                            color: readReceipt == 'Read' ? AppTheme.accent : AppTheme.muted,
+                          ),
+                          const SizedBox(width: 2),
+                          Text(readReceipt, style: TextStyle(color: readReceipt == 'Read' ? AppTheme.accent : AppTheme.muted, fontSize: 10.5, fontWeight: FontWeight.w700, height: 1)),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }
+
+        return Align(
+          alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
+          child: Container(
+            constraints: BoxConstraints(maxWidth: MediaQuery.sizeOf(context).width * 0.76),
+            margin: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 11),
+            decoration: BoxDecoration(
+              color: mine ? AppTheme.primary.withValues(alpha: 0.9) : AppTheme.surface,
+              borderRadius: BorderRadius.only(
+                topLeft: const Radius.circular(20),
+                topRight: const Radius.circular(20),
+                bottomLeft: Radius.circular(mine ? 20 : 5),
+                bottomRight: Radius.circular(mine ? 5 : 20),
+              ),
+              border: mine ? null : Border.all(color: AppTheme.border),
+            ),
+            child: MessageBubbleBody(
+              mine: mine,
+              timestamp: time,
+              readReceipt: readReceipt,
+              child: message['kind'] == 'offer'
+                  ? OfferMessageCard(offer: (message['offer'] as Map?) ?? const {})
+                  : message['kind'] == 'trade_proposal'
+                  ? TradeProposalCard(trade: (message['trade'] as Map?) ?? const {})
+                  : message['kind'] == 'voice'
+                  ? VoiceNoteBubble(
+                      audioDataUrl: '${message['voice_data_url'] ?? ''}',
+                      durationMs: message['voice_duration_ms'] as int? ?? 0,
+                      mine: mine,
+                    )
+                  : message['kind'] == 'transfer'
+                  ? Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.north_east_rounded, size: 18),
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: Text(
+                            '${mine ? 'Sent' : 'Received'} ${message['transfer_amount']} ${message['transfer_asset']}\n${message['transfer_note'] ?? ''}',
+                            style: const TextStyle(height: 1.35),
+                          ),
+                        ),
+                      ],
+                    )
+                  : Text(
+                      '${message['body'] ?? ''}',
+                      style: TextStyle(color: mine ? Colors.white : AppTheme.text, height: 1.4),
+                    ),
+            ),
+          ),
+        );
+      },
     );
   }
 }
@@ -793,9 +672,7 @@ class MessageBubbleBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final timeColor = mine
-        ? Colors.white.withValues(alpha: 0.72)
-        : AppTheme.muted;
+    final timeColor = mine ? Colors.white.withValues(alpha: 0.72) : AppTheme.muted;
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.end,
@@ -809,23 +686,14 @@ class MessageBubbleBody extends StatelessWidget {
               if (timestamp.isNotEmpty)
                 Text(
                   timestamp,
-                  style: TextStyle(
-                    color: timeColor,
-                    fontSize: 10.5,
-                    fontWeight: FontWeight.w600,
-                    height: 1,
-                  ),
+                  style: TextStyle(color: timeColor, fontSize: 10.5, fontWeight: FontWeight.w600, height: 1),
                 ),
               if (readReceipt != null) ...[
                 if (timestamp.isNotEmpty) const SizedBox(width: 5),
                 Icon(
-                  readReceipt == 'Read'
-                      ? Icons.done_all_rounded
-                      : Icons.done_rounded,
+                  readReceipt == 'Read' ? Icons.done_all_rounded : Icons.done_rounded,
                   size: 14,
-                  color: readReceipt == 'Read'
-                      ? AppTheme.accent
-                      : Colors.white.withValues(alpha: 0.72),
+                  color: readReceipt == 'Read' ? AppTheme.accent : Colors.white.withValues(alpha: 0.72),
                 ),
                 const SizedBox(width: 2),
                 Text(
@@ -848,125 +716,8 @@ class MessageBubbleBody extends StatelessWidget {
 
 String readReceiptLabel(Map message, String? currentUserId) {
   final receipts = (message['read_by'] as List? ?? []).cast<Map>();
-  final readByOther = receipts.any(
-    (receipt) => '${receipt['user_id']}' != currentUserId,
-  );
+  final readByOther = receipts.any((receipt) => '${receipt['user_id']}' != currentUserId);
   return readByOther ? 'Read' : 'Sent';
-}
-
-class TradeGuidanceSheet extends StatelessWidget {
-  const TradeGuidanceSheet({
-    super.key,
-    required this.offer,
-    required this.currentUserId,
-    required this.onSend,
-  });
-
-  final Map offer;
-  final String? currentUserId;
-  final Future<void> Function(String body) onSend;
-
-  bool get currentUserIsSeller {
-    final makerIsSeller = '${offer['side']}' == 'sell';
-    final currentUserIsMaker = '${offer['user_id']}' == currentUserId;
-    return makerIsSeller ? currentUserIsMaker : !currentUserIsMaker;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final sellerTitle = currentUserIsSeller
-        ? 'You are the seller'
-        : 'Seller step';
-    final buyerTitle = currentUserIsSeller ? 'Buyer step' : 'You are the buyer';
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(18, 8, 18, 18),
-        child: ConstrainedBox(
-          constraints: BoxConstraints(
-            maxHeight: MediaQuery.sizeOf(context).height * 0.78,
-          ),
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(
-                  'Trade checklist',
-                  style: Theme.of(context).textTheme.titleLarge,
-                ),
-                const SizedBox(height: 8),
-                _GuidanceStep(
-                  icon: Icons.payments_rounded,
-                  title: sellerTitle,
-                  message:
-                      'Seller should ask the buyer to pay first using the agreed payment method. Do not release crypto before confirming payment.',
-                ),
-                _GuidanceStep(
-                  icon: Icons.receipt_long_rounded,
-                  title: buyerTitle,
-                  message:
-                      'Buyer should send payment proof or receipt in this chat, then attach the wallet address for the crypto payout.',
-                ),
-                _GuidanceStep(
-                  icon: Icons.wallet_rounded,
-                  title: 'Payout',
-                  message:
-                      'After payment is confirmed, seller should request and verify the buyer wallet address before sending crypto.',
-                ),
-                const SizedBox(height: 12),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    ActionChip(
-                      avatar: const Icon(Icons.payments_rounded, size: 18),
-                      label: const Text('Ask buyer to pay'),
-                      onPressed: () {
-                        Navigator.pop(context);
-                        onSend(
-                          'Please make payment first using the agreed payment method, then send the receipt here.',
-                        );
-                      },
-                    ),
-                    ActionChip(
-                      avatar: const Icon(Icons.receipt_rounded, size: 18),
-                      label: const Text('Request receipt'),
-                      onPressed: () {
-                        Navigator.pop(context);
-                        onSend(
-                          'Please attach your payment proof/receipt in this chat for confirmation.',
-                        );
-                      },
-                    ),
-                    ActionChip(
-                      avatar: const Icon(Icons.wallet_rounded, size: 18),
-                      label: const Text('Request wallet'),
-                      onPressed: () {
-                        Navigator.pop(context);
-                        onSend(
-                          'Payment confirmed. Please send your ${offer['coin']} wallet address and provider.',
-                        );
-                      },
-                    ),
-                    ActionChip(
-                      avatar: const Icon(Icons.info_outline_rounded, size: 18),
-                      label: const Text('Send wallet reminder'),
-                      onPressed: () {
-                        Navigator.pop(context);
-                        onSend(
-                          'After sending payment proof, please also send your wallet address for the crypto payout.',
-                        );
-                      },
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
 }
 
 class VoiceNoteBubble extends StatefulWidget {
@@ -1009,7 +760,6 @@ class _VoiceNoteBubbleState extends State<VoiceNoteBubble> {
       if (mounted) setState(() => playing = false);
       return;
     }
-
     final comma = widget.audioDataUrl.indexOf(',');
     if (comma < 0) return;
     final meta = widget.audioDataUrl.substring(0, comma);
@@ -1030,10 +780,7 @@ class _VoiceNoteBubbleState extends State<VoiceNoteBubble> {
           IconButton(
             tooltip: playing ? 'Stop' : 'Play',
             onPressed: widget.audioDataUrl.isEmpty ? null : toggle,
-            icon: Icon(
-              playing ? Icons.stop_rounded : Icons.play_arrow_rounded,
-              color: color,
-            ),
+            icon: Icon(playing ? Icons.stop_rounded : Icons.play_arrow_rounded, color: color),
           ),
           Expanded(
             child: Container(
@@ -1046,19 +793,13 @@ class _VoiceNoteBubbleState extends State<VoiceNoteBubble> {
               child: FractionallySizedBox(
                 widthFactor: playing ? 0.72 : 0.28,
                 child: Container(
-                  decoration: BoxDecoration(
-                    color: color,
-                    borderRadius: BorderRadius.circular(999),
-                  ),
+                  decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(999)),
                 ),
               ),
             ),
           ),
           const SizedBox(width: 10),
-          Text(
-            formatDuration(widget.durationMs),
-            style: TextStyle(color: color.withValues(alpha: 0.86)),
-          ),
+          Text(formatDuration(widget.durationMs), style: TextStyle(color: color.withValues(alpha: 0.86))),
         ],
       ),
     );
@@ -1066,11 +807,7 @@ class _VoiceNoteBubbleState extends State<VoiceNoteBubble> {
 }
 
 class ImageMessageBubble extends StatelessWidget {
-  const ImageMessageBubble({
-    super.key,
-    required this.imageDataUrl,
-    required this.mine,
-  });
+  const ImageMessageBubble({super.key, required this.imageDataUrl, required this.mine});
 
   final String imageDataUrl;
   final bool mine;
@@ -1088,7 +825,6 @@ class ImageMessageBubble extends StatelessWidget {
         ],
       );
     }
-
     return GestureDetector(
       onTap: () => showDialog<void>(
         context: context,
@@ -1119,10 +855,7 @@ class ImageMessageBubble extends StatelessWidget {
       child: ClipRRect(
         borderRadius: BorderRadius.circular(14),
         child: ConstrainedBox(
-          constraints: const BoxConstraints(
-            maxWidth: 280,
-            maxHeight: 320,
-          ),
+          constraints: const BoxConstraints(maxWidth: 280, maxHeight: 320),
           child: Image.memory(bytes, fit: BoxFit.cover),
         ),
       ),
@@ -1130,48 +863,6 @@ class ImageMessageBubble extends StatelessWidget {
   }
 
   Color get _foregroundColor => mine ? Colors.white : AppTheme.text;
-}
-
-class _GuidanceStep extends StatelessWidget {
-  const _GuidanceStep({
-    required this.icon,
-    required this.title,
-    required this.message,
-  });
-
-  final IconData icon;
-  final String title;
-  final String message;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 12),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(icon, color: AppTheme.primaryBright, size: 22),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(fontWeight: FontWeight.w900),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  message,
-                  style: const TextStyle(color: AppTheme.muted, height: 1.35),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 }
 
 String formatDuration(int milliseconds) {

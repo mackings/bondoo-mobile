@@ -27,10 +27,10 @@ import 'trade_chat_card.dart';
 import 'transfer_dialog.dart';
 
 class ChatScreen extends ConsumerStatefulWidget {
-  const ChatScreen({super.key, required this.conversation, this.initialText});
+  const ChatScreen({super.key, required this.conversation, this.storyReply});
 
   final Map<String, dynamic> conversation;
-  final String? initialText;
+  final Map<String, dynamic>? storyReply;
 
   @override
   ConsumerState<ChatScreen> createState() => _ChatScreenState();
@@ -52,6 +52,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   bool startingCall = false;
   int recordingMs = 0;
   Timer? recordingTimer;
+  Map<String, dynamic>? _storyReply;
 
   String get id => widget.conversation['id'] as String;
   ConversationMeta get meta => conversationMeta(
@@ -62,7 +63,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   @override
   void initState() {
     super.initState();
-    if (widget.initialText != null) text.text = widget.initialText!;
+    _storyReply = widget.storyReply;
     _loadMessages().then((_) { if (mounted) _initSocket(); });
   }
 
@@ -108,19 +109,26 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
   Future<void> send() async {
     final body = text.text.trim();
-    if (body.isEmpty) return;
+    final reply = _storyReply;
+    if (body.isEmpty && reply == null) return;
 
     // Optimistic: show message immediately with a pending (clock) indicator
     final myId = ref.read(authControllerProvider).user?['id'] as String?;
     final tempId = 'pending_${DateTime.now().millisecondsSinceEpoch}';
     text.clear();
     setState(() {
+      _storyReply = null;
       _messages.add({
         'id': tempId,
         'conversation_id': id,
         'sender_id': myId,
-        'kind': 'text',
+        'kind': reply != null ? 'story_reply' : 'text',
         'body': body,
+        if (reply != null) ...{
+          'story_reply_image_data_url': reply['image_data_url'],
+          'story_reply_caption': reply['text'],
+          'story_reply_poster_name': _posterName(reply),
+        },
         'read_by': <dynamic>[],
         'created_at': DateTime.now().toUtc().toIso8601String(),
         '_pending': true,
@@ -129,7 +137,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToEnd());
 
     try {
-      if (_socketSvc.connected) {
+      if (reply != null) {
+        // Story replies always use REST — no WS path for this kind
+        await ref.read(chatRepositoryProvider).sendStoryReply(
+          conversationId: id,
+          body: body.isEmpty ? null : body,
+          storyReplyImageDataUrl: reply['image_data_url'] as String?,
+          storyReplyCaption: reply['text'] as String?,
+          storyReplyPosterName: _posterName(reply),
+        );
+        if (mounted) await _loadMessages(silent: true);
+      } else if (_socketSvc.connected) {
         await _socketSvc.sendText(id, body);
         // WS listener already added the real message; drop the optimistic copy
       } else {
@@ -138,13 +156,21 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       }
     } catch (error) {
       if (mounted) {
-        setState(() => _messages.removeWhere((m) => m['id'] == tempId));
-        text.text = body;
+        setState(() {
+          _messages.removeWhere((m) => m['id'] == tempId);
+          _storyReply = reply;
+          text.text = body;
+        });
         showError(context, error);
       }
       return;
     }
     if (mounted) setState(() => _messages.removeWhere((m) => m['id'] == tempId));
+  }
+
+  String _posterName(Map<String, dynamic> story) {
+    final user = story['user'] as Map<String, dynamic>?;
+    return '${user?['display_name'] ?? user?['username'] ?? 'Story'}';
   }
 
   Future<void> startCall({required bool video}) async {
@@ -363,7 +389,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                   color: AppTheme.surface,
                   border: Border(top: BorderSide(color: AppTheme.border)),
                 ),
-                child: recording ? _buildRecordingBar() : _buildInputBar(),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (_storyReply != null)
+                      _StoryReplyBanner(
+                        story: _storyReply!,
+                        onDismiss: () => setState(() => _storyReply = null),
+                      ),
+                    recording ? _buildRecordingBar() : _buildInputBar(),
+                  ],
+                ),
               ),
             ),
           ],
@@ -515,9 +551,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           valueListenable: text,
           builder: (context, value, _) {
             final hasText = value.text.trim().isNotEmpty;
+            final canSend = hasText || _storyReply != null;
             return IconButton(
-              tooltip: hasText ? 'Send message' : 'Record voice note',
-              onPressed: sending ? null : (hasText ? send : startVoiceNote),
+              tooltip: canSend ? 'Send message' : 'Record voice note',
+              onPressed: sending ? null : (canSend ? send : startVoiceNote),
               style: IconButton.styleFrom(
                 backgroundColor: AppTheme.primary,
                 foregroundColor: Colors.white,
@@ -527,7 +564,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               ),
               icon: sending
                   ? const SizedBox.square(dimension: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                  : Icon(hasText ? Icons.send_rounded : Icons.mic_rounded),
+                  : Icon(canSend ? Icons.send_rounded : Icons.mic_rounded),
             );
           },
         ),
@@ -660,6 +697,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                   ? OfferMessageCard(offer: (message['offer'] as Map?) ?? const {})
                   : message['kind'] == 'trade_proposal'
                   ? TradeProposalCard(trade: (message['trade'] as Map?) ?? const {})
+                  : message['kind'] == 'story_reply'
+                  ? _StoryReplyContent(
+                      imageDataUrl: message['story_reply_image_data_url'] as String?,
+                      caption: message['story_reply_caption'] as String?,
+                      posterName: message['story_reply_poster_name'] as String? ?? 'Story',
+                      body: message['body'] as String?,
+                      mine: mine,
+                    )
                   : message['kind'] == 'voice'
                   ? VoiceNoteBubble(
                       audioDataUrl: '${message['voice_data_url'] ?? ''}',
@@ -939,5 +984,172 @@ Uint8List? _decodeDataUrl(String dataUrl) {
     return base64Decode(dataUrl.substring(comma + 1));
   } catch (_) {
     return null;
+  }
+}
+
+// ── Story reply banner shown above the chat input ──────────────────────────
+
+class _StoryReplyBanner extends StatelessWidget {
+  const _StoryReplyBanner({required this.story, required this.onDismiss});
+  final Map<String, dynamic> story;
+  final VoidCallback onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
+    final imageDataUrl = story['image_data_url'] as String?;
+    final caption = story['text'] as String?;
+    final poster = story['user'] as Map<String, dynamic>?;
+    final posterName =
+        '${poster?['display_name'] ?? poster?['username'] ?? 'their'}';
+    final thumb = imageDataUrl != null ? _decodeDataUrl(imageDataUrl) : null;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 6),
+      decoration: BoxDecoration(
+        color: AppTheme.elevated,
+        borderRadius: BorderRadius.circular(12),
+        border: const Border(left: BorderSide(color: AppTheme.primary, width: 3)),
+      ),
+      child: Row(
+        children: [
+          if (thumb != null)
+            ClipRRect(
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(9),
+                bottomLeft: Radius.circular(9),
+              ),
+              child: Image.memory(thumb,
+                  width: 48, height: 48, fit: BoxFit.cover),
+            ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Story by $posterName',
+                    style: const TextStyle(
+                      color: AppTheme.primary,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  if (caption != null && caption.isNotEmpty)
+                    Text(
+                      caption,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          color: AppTheme.muted, fontSize: 12),
+                    )
+                  else if (thumb != null)
+                    const Text('Photo',
+                        style: TextStyle(color: AppTheme.muted, fontSize: 12)),
+                ],
+              ),
+            ),
+          ),
+          IconButton(
+            onPressed: onDismiss,
+            icon: const Icon(Icons.close_rounded,
+                size: 16, color: AppTheme.muted),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Story reply content inside a chat bubble ───────────────────────────────
+
+class _StoryReplyContent extends StatelessWidget {
+  const _StoryReplyContent({
+    required this.imageDataUrl,
+    required this.caption,
+    required this.posterName,
+    required this.body,
+    required this.mine,
+  });
+
+  final String? imageDataUrl;
+  final String? caption;
+  final String posterName;
+  final String? body;
+  final bool mine;
+
+  @override
+  Widget build(BuildContext context) {
+    final thumb = imageDataUrl != null ? _decodeDataUrl(imageDataUrl!) : null;
+    final quoteAccent = mine ? Colors.white.withValues(alpha: 0.72) : AppTheme.primary;
+    final quoteBg = mine ? Colors.white.withValues(alpha: 0.15) : AppTheme.elevated;
+    final subtleText = mine ? Colors.white.withValues(alpha: 0.72) : AppTheme.muted;
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          decoration: BoxDecoration(
+            color: quoteBg,
+            borderRadius: BorderRadius.circular(10),
+            border: Border(left: BorderSide(color: quoteAccent, width: 3)),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Flexible(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(10, 8, 8, 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        posterName,
+                        style: TextStyle(
+                          color: quoteAccent,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      if (caption != null && caption!.isNotEmpty)
+                        Text(
+                          caption!,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(color: subtleText, fontSize: 12),
+                        )
+                      else if (thumb != null)
+                        Text(
+                          'Photo',
+                          style: TextStyle(color: subtleText, fontSize: 12),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+              if (thumb != null)
+                Image.memory(thumb, width: 52, height: 52, fit: BoxFit.cover),
+            ],
+          ),
+        ),
+        if (body != null && body!.isNotEmpty) ...[
+          const SizedBox(height: 6),
+          Text(
+            body!,
+            style: TextStyle(
+              color: mine ? Colors.white : AppTheme.text,
+              height: 1.4,
+            ),
+          ),
+        ],
+      ],
+    );
   }
 }

@@ -49,6 +49,21 @@ class ChatRepository {
     });
   }
 
+  Future<void> sendStoryReply({
+    required String conversationId,
+    String? body,
+    String? storyReplyImageDataUrl,
+    String? storyReplyCaption,
+    String? storyReplyPosterName,
+  }) async {
+    final params = <String, dynamic>{};
+    if (body != null && body.isNotEmpty) params['body'] = body;
+    if (storyReplyImageDataUrl != null) params['story_reply_image_data_url'] = storyReplyImageDataUrl;
+    if (storyReplyCaption != null) params['story_reply_caption'] = storyReplyCaption;
+    if (storyReplyPosterName != null) params['story_reply_poster_name'] = storyReplyPosterName;
+    await _api.post('/chat/conversations/$conversationId/story-replies', params);
+  }
+
   Future<void> sendTransfer({
     required String conversationId,
     required String recipientId,

@@ -47,7 +47,7 @@ class _StoryViewerState extends ConsumerState<StoryViewer>
   }
 
   Future<void> _maybeMarkViewed() async {
-    if (_viewMarked) return;
+    if (_viewMarked || widget.isOwnStory) return;
     _viewMarked = true;
     try {
       await ref
@@ -82,27 +82,13 @@ class _StoryViewerState extends ConsumerState<StoryViewer>
           },
         ],
       };
-      // Build a pre-filled caption so the replier's message references the story
-      final storyText = widget.story['text'] as String?;
-      final hasImage = widget.story['image_data_url'] != null;
-      final posterName = (widget.story['user'] as Map?)?['display_name']
-          ?? (widget.story['user'] as Map?)?['username']
-          ?? 'their';
-      final caption = [
-        if (hasImage) '📷',
-        if (storyText != null && storyText.isNotEmpty) '"$storyText"',
-      ].join(' ');
-      final initialText = caption.isNotEmpty
-          ? 'Replying to $posterName\'s story: $caption\n\n'
-          : 'Replying to $posterName\'s story\n\n';
-
       Navigator.pop(context);
       Navigator.push(
         context,
         MaterialPageRoute(
           builder: (_) => ChatScreen(
             conversation: conversation,
-            initialText: initialText,
+            storyReply: widget.story,
           ),
         ),
       );

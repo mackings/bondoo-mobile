@@ -48,6 +48,14 @@ class PaystackRepository {
     return await _api.post('/paystack/virtual-account') as Map<String, dynamic>;
   }
 
+  Future<Map<String, dynamic>> identifyCustomer({
+    required String type,
+    required String value,
+  }) async {
+    return await _api.post('/paystack/identify', {'type': type, 'value': value})
+        as Map<String, dynamic>;
+  }
+
   Future<Map<String, dynamic>> withdraw({
     required double amount,
     required String accountNumber,

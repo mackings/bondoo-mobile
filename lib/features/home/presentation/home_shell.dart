@@ -6,6 +6,7 @@ import '../../auth/data/auth_repository.dart';
 import '../../chats/presentation/chats_screen.dart';
 import '../../market/presentation/market_screen.dart';
 import '../../profile/presentation/profile_screen.dart';
+import '../../wallet/data/paystack_repository.dart';
 import '../../wallet/presentation/wallet_screen.dart';
 
 class HomeShell extends ConsumerStatefulWidget {
@@ -18,6 +19,12 @@ class HomeShell extends ConsumerStatefulWidget {
 class _HomeShellState extends ConsumerState<HomeShell> {
   int index = 0;
   bool _setupPromptShown = false;
+  bool _verificationPromptShown = false;
+
+  bool _needsVerification(Map<String, dynamic>? user) {
+    if (user == null || user['email_verified'] != true) return false;
+    return user['virtual_account'] == null;
+  }
 
   bool _needsSetup(Map<String, dynamic>? user) {
     if (user == null || user['email_verified'] != true) return false;
@@ -25,8 +32,27 @@ class _HomeShellState extends ConsumerState<HomeShell> {
     return bankAccounts.isEmpty;
   }
 
+  void _maybeShowVerificationPrompt(Map<String, dynamic>? user) {
+    if (_verificationPromptShown || !_needsVerification(user)) return;
+    _verificationPromptShown = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      final verified = await showModalBottomSheet<bool>(
+        context: context,
+        isScrollControlled: true,
+        showDragHandle: true,
+        backgroundColor: AppTheme.surface,
+        builder: (_) => const _IdentityVerificationSheet(),
+      );
+      if (verified == true && mounted) {
+        await ref.read(authControllerProvider.notifier).refreshMe();
+      }
+    });
+  }
+
   void _maybeShowSetupPrompt(Map<String, dynamic>? user) {
-    if (_setupPromptShown || !_needsSetup(user)) return;
+    // Only show bank account prompt once identity is already verified
+    if (_setupPromptShown || !_needsSetup(user) || _needsVerification(user)) return;
     _setupPromptShown = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -85,6 +111,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
   @override
   Widget build(BuildContext context) {
     final user = ref.watch(authControllerProvider).user;
+    _maybeShowVerificationPrompt(user);
     _maybeShowSetupPrompt(user);
 
     // Tab order: Wallet → Chats → Market → Profile
@@ -100,6 +127,177 @@ class _HomeShellState extends ConsumerState<HomeShell> {
       bottomNavigationBar: _BottomNav(
         currentIndex: index,
         onTap: (i) => setState(() => index = i),
+      ),
+    );
+  }
+}
+
+// ── BVN / NIN identity verification sheet ─────────────────────────────────────
+
+class _IdentityVerificationSheet extends ConsumerStatefulWidget {
+  const _IdentityVerificationSheet();
+
+  @override
+  ConsumerState<_IdentityVerificationSheet> createState() =>
+      _IdentityVerificationSheetState();
+}
+
+class _IdentityVerificationSheetState
+    extends ConsumerState<_IdentityVerificationSheet> {
+  String _type = 'bvn';
+  final _ctrl = TextEditingController();
+  bool _loading = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final value = _ctrl.text.trim();
+    if (value.length != 11 || !RegExp(r'^\d+$').hasMatch(value)) {
+      setState(() => _error = 'Must be exactly 11 digits');
+      return;
+    }
+    setState(() { _loading = true; _error = null; });
+    try {
+      await ref.read(paystackRepositoryProvider).identifyCustomer(
+        type: _type,
+        value: value,
+      );
+      if (mounted) Navigator.pop(context, true);
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _error = e.toString().replaceFirst('Exception: ', '');
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+        24, 8, 24, MediaQuery.of(context).viewInsets.bottom + 24,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(
+            width: 56,
+            height: 56,
+            margin: const EdgeInsets.only(bottom: 16),
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              gradient: AppTheme.brandGradient,
+              borderRadius: BorderRadius.circular(18),
+            ),
+            child: const Icon(Icons.verified_user_rounded, color: Colors.white, size: 28),
+          ),
+          Text(
+            'Verify Your Identity',
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.titleLarge,
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Enter your BVN or NIN to activate your personal bank top-up account.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: AppTheme.muted, height: 1.5),
+          ),
+          const SizedBox(height: 24),
+          Row(
+            children: [
+              Expanded(
+                child: _TypeChip(
+                  label: 'BVN',
+                  selected: _type == 'bvn',
+                  onTap: () => setState(() => _type = 'bvn'),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _TypeChip(
+                  label: 'NIN',
+                  selected: _type == 'nin',
+                  onTap: () => setState(() => _type = 'nin'),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _ctrl,
+            keyboardType: TextInputType.number,
+            maxLength: 11,
+            decoration: InputDecoration(
+              labelText: '${_type.toUpperCase()} Number',
+              hintText: 'Enter your 11-digit ${_type.toUpperCase()}',
+              errorText: _error,
+            ),
+            onChanged: (_) {
+              if (_error != null) setState(() => _error = null);
+            },
+          ),
+          const SizedBox(height: 16),
+          FilledButton(
+            onPressed: _loading ? null : _submit,
+            child: _loading
+                ? const SizedBox.square(
+                    dimension: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                  )
+                : const Text('Verify & Enable Top-up'),
+          ),
+          const SizedBox(height: 8),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Skip for now'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TypeChip extends StatelessWidget {
+  const _TypeChip({required this.label, required this.selected, required this.onTap});
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        padding: const EdgeInsets.symmetric(vertical: 13),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: selected
+              ? AppTheme.primary.withValues(alpha: 0.14)
+              : AppTheme.elevated,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: selected ? AppTheme.primary : AppTheme.border,
+            width: selected ? 1.5 : 1,
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontWeight: FontWeight.w700,
+            fontSize: 15,
+            color: selected ? AppTheme.primary : AppTheme.muted,
+          ),
+        ),
       ),
     );
   }

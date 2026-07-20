@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -19,11 +22,31 @@ class HomeShell extends ConsumerStatefulWidget {
 class _HomeShellState extends ConsumerState<HomeShell> {
   int index = 0;
   bool _verificationPromptShown = false;
+  StreamSubscription<RemoteMessage>? _fcmSub;
+
+  @override
+  void initState() {
+    super.initState();
+    _fcmSub = FirebaseMessaging.onMessage.listen((msg) {
+      if (msg.data['type'] == 'wallet_ready' && mounted) {
+        ref.read(authControllerProvider.notifier).refreshMe();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _fcmSub?.cancel();
+    super.dispose();
+  }
 
   bool _needsVerification(Map<String, dynamic>? user) {
     if (user == null || user['email_verified'] != true) return false;
     final va = user['virtual_account'] as Map?;
-    return va == null || (va['account_number'] as String?)?.isNotEmpty != true;
+    if ((va?['account_number'] as String?)?.isNotEmpty == true) return false;
+    // BVN already submitted — wallet is being processed, don't show form again
+    if (user['kyc_submitted'] == true) return false;
+    return true;
   }
 
   void _maybeShowVerificationPrompt(Map<String, dynamic>? user) {
@@ -183,7 +206,7 @@ class _IdentityVerificationSheetState
         ),
         const SizedBox(height: 12),
         const Text(
-          'Your identity is being verified. Your wallet will be ready the next time you open the app — usually within a few minutes.',
+          'Your identity is being verified. Your wallet will appear automatically once confirmed — usually within a few minutes.',
           textAlign: TextAlign.center,
           style: TextStyle(color: AppTheme.muted, height: 1.6),
         ),

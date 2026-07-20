@@ -88,8 +88,8 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
     );
   }
 
-  void _showWithdrawSheet() {
-    showModalBottomSheet<void>(
+  Future<void> _showWithdrawSheet() async {
+    final withdrawn = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
@@ -97,9 +97,12 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
       builder: (_) => _WithdrawSheet(
         balance: _balance,
         paystackRepo: ref.read(paystackRepositoryProvider),
-        onWithdrawn: _load,
       ),
     );
+    if (withdrawn == true && mounted) {
+      _load();
+      showApiSuccess(context, title: 'Withdrawal initiated', message: 'Your funds are on the way to your bank.');
+    }
   }
 
   @override
@@ -466,10 +469,9 @@ class _TxTile extends StatelessWidget {
 // ── Withdraw sheet ────────────────────────────────────────────────────────────
 
 class _WithdrawSheet extends StatefulWidget {
-  const _WithdrawSheet({required this.balance, required this.paystackRepo, required this.onWithdrawn});
+  const _WithdrawSheet({required this.balance, required this.paystackRepo});
   final double balance;
   final PaystackRepository paystackRepo;
-  final VoidCallback onWithdrawn;
 
   @override
   State<_WithdrawSheet> createState() => _WithdrawSheetState();
@@ -528,11 +530,7 @@ class _WithdrawSheetState extends State<_WithdrawSheet> {
         bankCode: '${_selectedBank!['code']}',
         accountName: _accountNameCtrl.text.trim(),
       );
-      widget.onWithdrawn();
-      if (mounted) {
-        Navigator.pop(context);
-        showApiSuccess(context, title: 'Withdrawal initiated', message: 'Your funds are on the way to your bank.');
-      }
+      if (mounted) Navigator.pop(context, true);
     } catch (e) {
       if (mounted) showApiError(context, e);
     } finally {

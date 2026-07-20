@@ -40,7 +40,9 @@ class _HomeShellState extends ConsumerState<HomeShell> {
       final verified = await showModalBottomSheet<bool>(
         context: context,
         isScrollControlled: true,
-        showDragHandle: true,
+        isDismissible: false,
+        enableDrag: false,
+        showDragHandle: false,
         backgroundColor: AppTheme.surface,
         builder: (_) => const _IdentityVerificationSheet(),
       );
@@ -180,86 +182,84 @@ class _IdentityVerificationSheetState
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: EdgeInsets.fromLTRB(
-        24, 8, 24, MediaQuery.of(context).viewInsets.bottom + 24,
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Container(
-            width: 56,
-            height: 56,
-            margin: const EdgeInsets.only(bottom: 16),
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              gradient: AppTheme.brandGradient,
-              borderRadius: BorderRadius.circular(18),
-            ),
-            child: const Icon(Icons.verified_user_rounded, color: Colors.white, size: 28),
-          ),
-          Text(
-            'Verify Your Identity',
-            textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.titleLarge,
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'Enter your BVN or NIN to activate your personal bank top-up account.',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: AppTheme.muted, height: 1.5),
-          ),
-          const SizedBox(height: 24),
-          Row(
-            children: [
-              Expanded(
-                child: _TypeChip(
-                  label: 'BVN',
-                  selected: _type == 'bvn',
-                  onTap: () => setState(() => _type = 'bvn'),
-                ),
+    return PopScope(
+      canPop: false,
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(
+          24, 32, 24, MediaQuery.of(context).viewInsets.bottom + 32,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Container(
+              width: 64,
+              height: 64,
+              margin: const EdgeInsets.only(bottom: 20),
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                gradient: AppTheme.brandGradient,
+                borderRadius: BorderRadius.circular(20),
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _TypeChip(
-                  label: 'NIN',
-                  selected: _type == 'nin',
-                  onTap: () => setState(() => _type = 'nin'),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          TextField(
-            controller: _ctrl,
-            keyboardType: TextInputType.number,
-            maxLength: 11,
-            decoration: InputDecoration(
-              labelText: '${_type.toUpperCase()} Number',
-              hintText: 'Enter your 11-digit ${_type.toUpperCase()}',
-              errorText: _error,
+              child: const Icon(Icons.verified_user_rounded, color: Colors.white, size: 32),
             ),
-            onChanged: (_) {
-              if (_error != null) setState(() => _error = null);
-            },
-          ),
-          const SizedBox(height: 16),
-          FilledButton(
-            onPressed: _loading ? null : _submit,
-            child: _loading
-                ? const SizedBox.square(
-                    dimension: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                  )
-                : const Text('Verify & Enable Top-up'),
-          ),
-          const SizedBox(height: 8),
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Skip for now'),
-          ),
-        ],
+            Text(
+              'Verify Your Identity',
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 10),
+            const Text(
+              'Your BVN or NIN is required to activate your wallet. This is a one-time step.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: AppTheme.muted, height: 1.55),
+            ),
+            const SizedBox(height: 28),
+            Row(
+              children: [
+                Expanded(
+                  child: _TypeChip(
+                    label: 'BVN',
+                    selected: _type == 'bvn',
+                    onTap: () => setState(() => _type = 'bvn'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _TypeChip(
+                    label: 'NIN',
+                    selected: _type == 'nin',
+                    onTap: () => setState(() => _type = 'nin'),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _ctrl,
+              keyboardType: TextInputType.number,
+              maxLength: 11,
+              decoration: InputDecoration(
+                labelText: '${_type.toUpperCase()} Number',
+                hintText: 'Enter your 11-digit ${_type.toUpperCase()}',
+                errorText: _error,
+              ),
+              onChanged: (_) {
+                if (_error != null) setState(() => _error = null);
+              },
+            ),
+            const SizedBox(height: 20),
+            FilledButton(
+              onPressed: _loading ? null : _submit,
+              child: _loading
+                  ? const SizedBox.square(
+                      dimension: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                    )
+                  : const Text('Verify & Continue'),
+            ),
+          ],
+        ),
       ),
     );
   }

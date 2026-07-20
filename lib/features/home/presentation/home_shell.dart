@@ -84,6 +84,7 @@ class _IdentityVerificationSheetState
   String _type = 'bvn';
   final _ctrl = TextEditingController();
   bool _submitting = false;
+  bool _submitted = false; // BVN sent, wallet being set up in background
   String? _error;
 
   @override
@@ -108,10 +109,8 @@ class _IdentityVerificationSheetState
       if (result['status'] == 'verified') {
         Navigator.pop(context, true);
       } else {
-        setState(() {
-          _submitting = false;
-          _error = 'Could not create wallet. Please try again.';
-        });
+        // "submitted" — BVN sent to Paystack, wallet created in background via webhook
+        setState(() { _submitting = false; _submitted = true; });
       }
     } catch (e) {
       if (mounted) {
@@ -131,8 +130,43 @@ class _IdentityVerificationSheetState
         padding: EdgeInsets.fromLTRB(
           24, 32, 24, MediaQuery.of(context).viewInsets.bottom + 40,
         ),
-        child: _buildForm(context),
+        child: _submitted ? _buildSubmitted(context) : _buildForm(context),
       ),
+    );
+  }
+
+  Widget _buildSubmitted(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 72, height: 72,
+          decoration: BoxDecoration(
+            gradient: AppTheme.brandGradient,
+            borderRadius: BorderRadius.circular(22),
+          ),
+          alignment: Alignment.center,
+          child: const Icon(Icons.verified_rounded, color: Colors.white, size: 36),
+        ),
+        const SizedBox(height: 24),
+        Text(
+          'Verification Submitted',
+          textAlign: TextAlign.center,
+          style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+        ),
+        const SizedBox(height: 12),
+        const Text(
+          'Your identity is being verified. Your wallet will be ready the next time you open the app — usually within a few minutes.',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: AppTheme.muted, height: 1.6),
+        ),
+        const SizedBox(height: 32),
+        FilledButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: const Text('Got it'),
+        ),
+        const SizedBox(height: 8),
+      ],
     );
   }
 

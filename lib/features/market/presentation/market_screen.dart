@@ -93,8 +93,13 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
     try {
       final products = await ref.read(productRepositoryProvider).getProducts();
       if (mounted) setState(() { _products = products; _productsLoading = false; });
-    } catch (_) {
+    } catch (e) {
       if (mounted) setState(() => _productsLoading = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not load listings: $e'), backgroundColor: Colors.red),
+        );
+      }
     }
   }
 
@@ -169,11 +174,11 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
   }
 
   Future<void> _openProduct(Map<String, dynamic> product) async {
-    final result = await Navigator.push<String>(
+    await Navigator.push<String>(
       context,
       MaterialPageRoute(builder: (_) => ProductDetailScreen(product: product)),
     );
-    if (result == 'deleted') _loadProducts();
+    _loadProducts();
   }
 
   @override
@@ -377,7 +382,7 @@ class _ProductCard extends StatelessWidget {
     final isSold = '${product['status']}' == 'sold';
     final priceStr = '₦${price.toStringAsFixed(0).replaceAllMapped(RegExp(r'\B(?=(\d{3})+(?!\d))'), (_) => ',')}';
     final seller = product['seller'] as Map<String, dynamic>?;
-    final sellerName = '${seller?['display_name'] ?? seller?['username'] ?? ''}';
+    final sellerName = '${seller?['display_name'] ?? ''}';
 
     Uint8List? thumb;
     if (images.isNotEmpty) {
@@ -434,7 +439,7 @@ class _ProductCard extends StatelessWidget {
                     const Spacer(),
                     Text(priceStr, style: const TextStyle(color: AppTheme.primary, fontWeight: FontWeight.w900, fontSize: 14)),
                     if (sellerName.isNotEmpty)
-                      Text('@$sellerName', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: AppTheme.muted, fontSize: 10)),
+                      Text(sellerName, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: AppTheme.muted, fontSize: 10)),
                   ],
                 ),
               ),

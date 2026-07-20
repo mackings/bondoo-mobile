@@ -84,6 +84,7 @@ class _IdentityVerificationSheetState
   String _type = 'bvn';
   final _ctrl = TextEditingController();
   bool _loading = false;
+  String _loadingMessage = 'Verifying...';
   String? _error;
 
   @override
@@ -98,13 +99,19 @@ class _IdentityVerificationSheetState
       setState(() => _error = 'Must be exactly 11 digits');
       return;
     }
-    setState(() { _loading = true; _error = null; });
+    setState(() { _loading = true; _loadingMessage = 'Verifying your ${_type.toUpperCase()}...'; _error = null; });
     try {
-      await ref.read(paystackRepositoryProvider).identifyCustomer(
+      final result = await ref.read(paystackRepositoryProvider).identifyCustomer(
         type: _type,
         value: value,
       );
-      if (mounted) Navigator.pop(context, true);
+      if (result['status'] == 'verified') {
+        if (mounted) Navigator.pop(context, true);
+      } else {
+        // Backend timed out polling — poll from Flutter side
+        if (mounted) setState(() => _loadingMessage = 'Setting up your wallet...');
+        await _pollForWallet();
+      }
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -112,6 +119,26 @@ class _IdentityVerificationSheetState
           _error = e.toString().replaceFirst('Exception: ', '');
         });
       }
+    }
+  }
+
+  Future<void> _pollForWallet() async {
+    for (var i = 0; i < 20; i++) {
+      await Future.delayed(const Duration(seconds: 5));
+      if (!mounted) return;
+      try {
+        final status = await ref.read(paystackRepositoryProvider).getIdentifyStatus();
+        if (status['status'] == 'verified') {
+          if (mounted) Navigator.pop(context, true);
+          return;
+        }
+      } catch (_) {}
+    }
+    if (mounted) {
+      setState(() {
+        _loading = false;
+        _error = 'Verification is taking longer than expected. Please try again.';
+      });
     }
   }
 
@@ -187,9 +214,16 @@ class _IdentityVerificationSheetState
             FilledButton(
               onPressed: _loading ? null : _submit,
               child: _loading
-                  ? const SizedBox.square(
-                      dimension: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                  ? Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const SizedBox.square(
+                          dimension: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                        ),
+                        const SizedBox(width: 10),
+                        Text(_loadingMessage, style: const TextStyle(color: Colors.white)),
+                      ],
                     )
                   : const Text('Verify & Continue'),
             ),

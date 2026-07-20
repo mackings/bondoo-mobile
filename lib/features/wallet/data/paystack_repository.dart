@@ -56,6 +56,10 @@ class PaystackRepository {
         as Map<String, dynamic>;
   }
 
+  Future<Map<String, dynamic>> getIdentifyStatus() async {
+    return await _api.get('/paystack/identify-status') as Map<String, dynamic>;
+  }
+
   Future<Map<String, dynamic>> withdraw({
     required double amount,
     required String accountNumber,

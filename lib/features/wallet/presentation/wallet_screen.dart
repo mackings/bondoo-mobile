@@ -24,6 +24,7 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
   bool _loading = true;
   String? _error;
   bool _creatingDva = false;
+  bool _dvaUnavailable = false;
   bool _balanceVisible = true;
 
   @override
@@ -53,11 +54,12 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
   }
 
   Future<void> _setupVirtualAccount({bool showError = true}) async {
-    if (mounted) setState(() => _creatingDva = true);
+    if (mounted) setState(() { _creatingDva = true; _dvaUnavailable = false; });
     try {
       final dva = await ref.read(paystackRepositoryProvider).createVirtualAccount();
       if (mounted) setState(() => _virtualAccount = dva);
     } catch (e) {
+      if (mounted) setState(() => _dvaUnavailable = true);
       if (mounted && showError) showApiError(context, e, title: 'Could not create account');
     } finally {
       if (mounted) setState(() => _creatingDva = false);
@@ -246,6 +248,11 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
                     SizedBox(width: 8),
                     Text('Setting up your account...', style: TextStyle(color: Colors.white54, fontSize: 11)),
                   ]),
+                ] else if (_dvaUnavailable) ...[
+                  const Text(
+                    'Bank top-up not available yet. Your wallet still receives payments from sales.',
+                    style: TextStyle(color: Colors.white54, fontSize: 11, height: 1.4),
+                  ),
                 ] else if (_virtualAccount != null) ...[
                   Text(displayNum,
                     style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w900, letterSpacing: 2, fontFamily: 'monospace')),

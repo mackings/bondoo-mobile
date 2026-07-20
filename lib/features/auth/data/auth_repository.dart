@@ -57,10 +57,19 @@ class AuthController extends StateNotifier<AuthState> {
         state = const AuthState();
         return;
       }
+      // Load cache but keep restoring=true while we refresh from the server.
+      // This ensures HomeShell always sees up-to-date wallet/profile data.
       state = AuthState(
         token: token,
         user: jsonDecode(userJson) as Map<String, dynamic>,
+        restoring: true,
       );
+      try {
+        await refreshMe();
+      } catch (_) {
+        // Server unreachable — fall back to cached user and continue.
+        state = state.copyWith(restoring: false);
+      }
     } catch (_) {
       final prefs = await SharedPreferences.getInstance();
       await prefs.remove(_tokenKey);

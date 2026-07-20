@@ -134,6 +134,16 @@ class _IdentityVerificationSheetState
             if (mounted) Navigator.pop(context, true);
             return;
           }
+          if (status['status'] == 'failed') {
+            if (mounted) {
+              setState(() {
+                _waitingForWallet = false;
+                _error = status['message'] as String? ??
+                    'Verification failed. Please check your BVN/NIN and try again.';
+              });
+            }
+            return;
+          }
         } catch (_) {}
       }
     });

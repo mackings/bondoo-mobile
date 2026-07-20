@@ -83,8 +83,8 @@ class _IdentityVerificationSheetState
     extends ConsumerState<_IdentityVerificationSheet> {
   String _type = 'bvn';
   final _ctrl = TextEditingController();
-  bool _loading = false;
-  String _loadingMessage = 'Verifying...';
+  bool _submitting = false;
+  bool _waitingForWallet = false;
   String? _error;
 
   @override
@@ -99,137 +99,168 @@ class _IdentityVerificationSheetState
       setState(() => _error = 'Must be exactly 11 digits');
       return;
     }
-    setState(() { _loading = true; _loadingMessage = 'Verifying your ${_type.toUpperCase()}...'; _error = null; });
+    setState(() { _submitting = true; _error = null; });
     try {
       final result = await ref.read(paystackRepositoryProvider).identifyCustomer(
         type: _type,
         value: value,
       );
+      if (!mounted) return;
       if (result['status'] == 'verified') {
-        if (mounted) Navigator.pop(context, true);
+        Navigator.pop(context, true);
       } else {
-        // Backend timed out polling — poll from Flutter side
-        if (mounted) setState(() => _loadingMessage = 'Setting up your wallet...');
-        await _pollForWallet();
+        // Identification submitted — switch to waiting screen and poll indefinitely
+        setState(() { _submitting = false; _waitingForWallet = true; });
+        _pollForWallet();
       }
     } catch (e) {
       if (mounted) {
         setState(() {
-          _loading = false;
+          _submitting = false;
           _error = e.toString().replaceFirst('Exception: ', '');
         });
       }
     }
   }
 
-  Future<void> _pollForWallet() async {
-    for (var i = 0; i < 20; i++) {
-      await Future.delayed(const Duration(seconds: 5));
-      if (!mounted) return;
-      try {
-        final status = await ref.read(paystackRepositoryProvider).getIdentifyStatus();
-        if (status['status'] == 'verified') {
-          if (mounted) Navigator.pop(context, true);
-          return;
-        }
-      } catch (_) {}
-    }
-    if (mounted) {
-      setState(() {
-        _loading = false;
-        _error = 'Verification is taking longer than expected. Please try again.';
-      });
-    }
+  void _pollForWallet() {
+    Future.microtask(() async {
+      while (mounted) {
+        await Future.delayed(const Duration(seconds: 5));
+        if (!mounted) return;
+        try {
+          final status = await ref.read(paystackRepositoryProvider).getIdentifyStatus();
+          if (status['status'] == 'verified') {
+            if (mounted) Navigator.pop(context, true);
+            return;
+          }
+        } catch (_) {}
+      }
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     return PopScope(
       canPop: false,
-      child: Padding(
-        padding: EdgeInsets.fromLTRB(
-          24, 32, 24, MediaQuery.of(context).viewInsets.bottom + 32,
+      child: AnimatedSize(
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOutCubic,
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(
+            24, 32, 24, MediaQuery.of(context).viewInsets.bottom + 40,
+          ),
+          child: _waitingForWallet ? _buildWaiting(context) : _buildForm(context),
         ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+      ),
+    );
+  }
+
+  Widget _buildWaiting(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 72,
+          height: 72,
+          decoration: BoxDecoration(
+            gradient: AppTheme.brandGradient,
+            borderRadius: BorderRadius.circular(22),
+          ),
+          alignment: Alignment.center,
+          child: const Icon(Icons.account_balance_wallet_rounded, color: Colors.white, size: 36),
+        ),
+        const SizedBox(height: 28),
+        Text(
+          'Creating Your Wallet',
+          textAlign: TextAlign.center,
+          style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+        ),
+        const SizedBox(height: 12),
+        const Text(
+          'Please wait while we set up your personal top-up account. This usually takes under a minute.',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: AppTheme.muted, height: 1.6),
+        ),
+        const SizedBox(height: 36),
+        const CircularProgressIndicator(),
+        const SizedBox(height: 8),
+      ],
+    );
+  }
+
+  Widget _buildForm(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Container(
+          width: 64,
+          height: 64,
+          margin: const EdgeInsets.only(bottom: 20),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            gradient: AppTheme.brandGradient,
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: const Icon(Icons.verified_user_rounded, color: Colors.white, size: 32),
+        ),
+        Text(
+          'Verify Your Identity',
+          textAlign: TextAlign.center,
+          style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+        ),
+        const SizedBox(height: 10),
+        const Text(
+          'Your BVN or NIN is required to activate your wallet. This is a one-time step.',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: AppTheme.muted, height: 1.55),
+        ),
+        const SizedBox(height: 28),
+        Row(
           children: [
-            Container(
-              width: 64,
-              height: 64,
-              margin: const EdgeInsets.only(bottom: 20),
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                gradient: AppTheme.brandGradient,
-                borderRadius: BorderRadius.circular(20),
+            Expanded(
+              child: _TypeChip(
+                label: 'BVN',
+                selected: _type == 'bvn',
+                onTap: () => setState(() => _type = 'bvn'),
               ),
-              child: const Icon(Icons.verified_user_rounded, color: Colors.white, size: 32),
             ),
-            Text(
-              'Verify Your Identity',
-              textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
-            ),
-            const SizedBox(height: 10),
-            const Text(
-              'Your BVN or NIN is required to activate your wallet. This is a one-time step.',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: AppTheme.muted, height: 1.55),
-            ),
-            const SizedBox(height: 28),
-            Row(
-              children: [
-                Expanded(
-                  child: _TypeChip(
-                    label: 'BVN',
-                    selected: _type == 'bvn',
-                    onTap: () => setState(() => _type = 'bvn'),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _TypeChip(
-                    label: 'NIN',
-                    selected: _type == 'nin',
-                    onTap: () => setState(() => _type = 'nin'),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: _ctrl,
-              keyboardType: TextInputType.number,
-              maxLength: 11,
-              decoration: InputDecoration(
-                labelText: '${_type.toUpperCase()} Number',
-                hintText: 'Enter your 11-digit ${_type.toUpperCase()}',
-                errorText: _error,
+            const SizedBox(width: 12),
+            Expanded(
+              child: _TypeChip(
+                label: 'NIN',
+                selected: _type == 'nin',
+                onTap: () => setState(() => _type = 'nin'),
               ),
-              onChanged: (_) {
-                if (_error != null) setState(() => _error = null);
-              },
-            ),
-            const SizedBox(height: 20),
-            FilledButton(
-              onPressed: _loading ? null : _submit,
-              child: _loading
-                  ? Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        const SizedBox.square(
-                          dimension: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                        ),
-                        const SizedBox(width: 10),
-                        Text(_loadingMessage, style: const TextStyle(color: Colors.white)),
-                      ],
-                    )
-                  : const Text('Verify & Continue'),
             ),
           ],
         ),
-      ),
+        const SizedBox(height: 16),
+        TextField(
+          controller: _ctrl,
+          keyboardType: TextInputType.number,
+          maxLength: 11,
+          decoration: InputDecoration(
+            labelText: '${_type.toUpperCase()} Number',
+            hintText: 'Enter your 11-digit ${_type.toUpperCase()}',
+            errorText: _error,
+          ),
+          onChanged: (_) {
+            if (_error != null) setState(() => _error = null);
+          },
+        ),
+        const SizedBox(height: 20),
+        FilledButton(
+          onPressed: _submitting ? null : _submit,
+          child: _submitting
+              ? const SizedBox.square(
+                  dimension: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                )
+              : const Text('Verify & Continue'),
+        ),
+      ],
     );
   }
 }

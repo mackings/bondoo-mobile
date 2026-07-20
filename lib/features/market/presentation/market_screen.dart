@@ -1,16 +1,18 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/network/socket_service.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../shared/widgets/exchange_ui.dart';
 import '../../auth/data/auth_repository.dart';
-import '../../chats/data/chat_repository.dart';
-import '../../chats/presentation/chat_screen.dart';
-import '../../trades/data/trade_repository.dart';
-import '../../../core/network/socket_service.dart';
+import '../data/product_repository.dart';
 import '../data/story_repository.dart';
+import 'product_create_sheet.dart';
+import 'product_detail_screen.dart';
 import 'story_creator.dart';
 import 'story_viewer.dart';
 
@@ -22,11 +24,8 @@ class MarketScreen extends ConsumerStatefulWidget {
 }
 
 class _MarketScreenState extends ConsumerState<MarketScreen> {
-  List<dynamic>? _traders;
-  bool _loading = true;
-  String? _error;
-  String? _filterType;
-  String? _filterCoin;
+  List<Map<String, dynamic>> _products = [];
+  bool _productsLoading = true;
 
   List<Map<String, dynamic>> _stories = [];
   Map<String, dynamic>? _myStory;
@@ -38,7 +37,7 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
   @override
   void initState() {
     super.initState();
-    _load();
+    _loadProducts();
     _loadStories().then((_) => _subscribeStories());
   }
 
@@ -51,31 +50,28 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
 
   void _subscribeStories() {
     final myId = ref.read(authControllerProvider).user?['id'] as String?;
-    // WS payload has no image_data_url (stripped to stay under Socket.IO 1MB
-    // buffer limit). Do a full REST reload so the image loads properly.
     _newStorySub = SocketService().onNewStory.listen((story) {
       if (!mounted) return;
-      if ('${story['user_id']}' == myId) return; // own story, already updated
+      if ('${story['user_id']}' == myId) return;
       _loadStories();
     });
     _storyDeletedSub = SocketService().onStoryDeleted.listen((userId) {
       if (!mounted) return;
+      final myId = ref.read(authControllerProvider).user?['id'] as String?;
       setState(() {
         _stories = _stories.where((s) => '${s['user_id']}' != userId).toList();
+        if (userId == myId) _myStory = null;
       });
     });
   }
 
-  Future<void> _load() async {
-    setState(() { _loading = true; _error = null; });
+  Future<void> _loadProducts() async {
+    if (mounted) setState(() => _productsLoading = true);
     try {
-      final traders = await ref.read(tradeRepositoryProvider).getMarket(
-        type: _filterType,
-        coin: _filterCoin,
-      );
-      if (mounted) setState(() { _traders = traders; _loading = false; });
-    } catch (e) {
-      if (mounted) setState(() { _loading = false; _error = '$e'; });
+      final products = await ref.read(productRepositoryProvider).getProducts();
+      if (mounted) setState(() { _products = products; _productsLoading = false; });
+    } catch (_) {
+      if (mounted) setState(() => _productsLoading = false);
     }
   }
 
@@ -101,9 +97,7 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
       context: context,
       isScrollControlled: true,
       backgroundColor: AppTheme.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (_) => const StoryCreatorSheet(),
     );
     if (result == 'created') _loadStories();
@@ -111,18 +105,20 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
 
   Future<void> _openMyStoryViewers() async {
     if (_myStory == null) return;
-    // Show the story content first, then let the viewer sheet handle viewers
-    await Navigator.push(
+    final result = await Navigator.push<String>(
       context,
       PageRouteBuilder(
         opaque: false,
         barrierColor: Colors.black,
         pageBuilder: (_, _, _) => StoryViewer(story: _myStory!, isOwnStory: true),
-        transitionsBuilder: (_, anim, _, child) =>
-            FadeTransition(opacity: anim, child: child),
+        transitionsBuilder: (_, anim, _, child) => FadeTransition(opacity: anim, child: child),
       ),
     );
-    _loadStories();
+    if (result == 'deleted') {
+      if (mounted) setState(() => _myStory = null);
+    } else {
+      _loadStories();
+    }
   }
 
   Future<void> _openStory(Map<String, dynamic> story) async {
@@ -132,78 +128,192 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
         opaque: false,
         barrierColor: Colors.black,
         pageBuilder: (_, _, _) => StoryViewer(story: story),
-        transitionsBuilder: (_, anim, _, child) =>
-            FadeTransition(opacity: anim, child: child),
+        transitionsBuilder: (_, anim, _, child) => FadeTransition(opacity: anim, child: child),
       ),
     );
-    // Refresh viewed state
     _loadStories();
+  }
+
+  Future<void> _openCreateSheet() async {
+    final result = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppTheme.surface,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (_) => const ProductCreateSheet(),
+    );
+    if (result == 'created') _loadProducts();
+  }
+
+  Future<void> _openProduct(Map<String, dynamic> product) async {
+    final result = await Navigator.push<String>(
+      context,
+      MaterialPageRoute(builder: (_) => ProductDetailScreen(product: product)),
+    );
+    if (result == 'deleted') _loadProducts();
   }
 
   @override
   Widget build(BuildContext context) {
-    return ExchangeScaffold(
-      title: 'Market',
-      subtitle: 'Live traders ready to deal',
-      body: Column(
-        children: [
-          // ── Stories row ────────────────────────────────────────────
-          _StoriesRow(
-            stories: _stories,
-            myStory: _myStory,
-            loading: _storiesLoading,
-            onAddStory: _openStoryCreator,
-            onMyStory: _openMyStoryViewers,
-            onStoryTap: _openStory,
+    return Scaffold(
+      backgroundColor: AppTheme.background,
+      body: SafeArea(
+        bottom: false,
+        child: RefreshIndicator(
+          onRefresh: () async { await _loadProducts(); await _loadStories(); },
+          child: CustomScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            slivers: [
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
+                  child: Row(
+                    children: [
+                      const Text('Market', style: TextStyle(fontSize: 26, fontWeight: FontWeight.w900)),
+                      const Spacer(),
+                      FilledButton.icon(
+                        onPressed: _openCreateSheet,
+                        icon: const Icon(Icons.add_rounded, size: 18),
+                        label: const Text('List Product'),
+                        style: FilledButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                          textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+
+              // Stories row
+              SliverToBoxAdapter(
+                child: _StoriesRow(
+                  stories: _stories,
+                  myStory: _myStory,
+                  loading: _storiesLoading,
+                  onAddStory: _openStoryCreator,
+                  onMyStory: _openMyStoryViewers,
+                  onStoryTap: _openStory,
+                ),
+              ),
+
+              // Products section header
+              const SliverToBoxAdapter(
+                child: Padding(
+                  padding: EdgeInsets.fromLTRB(20, 20, 20, 10),
+                  child: Text('Latest Listings', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
+                ),
+              ),
+
+              // Products grid
+              if (_productsLoading)
+                const SliverToBoxAdapter(child: Padding(padding: EdgeInsets.only(top: 40), child: Center(child: CircularProgressIndicator())))
+              else if (_products.isEmpty)
+                const SliverToBoxAdapter(
+                  child: EmptyState(
+                    icon: Icons.storefront_outlined,
+                    title: 'No listings yet',
+                    message: 'Be the first to list a product. Tap "List Product" to get started.',
+                  ),
+                )
+              else
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 100),
+                  sliver: SliverGrid.count(
+                    crossAxisCount: 2,
+                    crossAxisSpacing: 12,
+                    mainAxisSpacing: 12,
+                    childAspectRatio: 0.72,
+                    children: _products.map((p) => _ProductCard(product: p, onTap: () => _openProduct(p))).toList(),
+                  ),
+                ),
+            ],
           ),
-          _FilterBar(
-            filterType: _filterType,
-            filterCoin: _filterCoin,
-            onChanged: (type, coin) {
-              setState(() { _filterType = type; _filterCoin = coin; });
-              _load();
-            },
-          ),
-          Expanded(child: _buildBody()),
-        ],
+        ),
       ),
     );
   }
+}
 
-  Widget _buildBody() {
-    if (_loading) return const Center(child: CircularProgressIndicator());
-    if (_error != null) {
-      return Center(
+// ── Product card ─────────────────────────────────────────────────────────────
+
+class _ProductCard extends StatelessWidget {
+  const _ProductCard({required this.product, required this.onTap});
+  final Map<String, dynamic> product;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final images = (product['images'] as List? ?? []).cast<String>();
+    final title = '${product['title'] ?? ''}';
+    final price = (product['price'] as num?)?.toDouble() ?? 0;
+    final isSold = '${product['status']}' == 'sold';
+    final priceStr = '₦${price.toStringAsFixed(0).replaceAllMapped(RegExp(r'\B(?=(\d{3})+(?!\d))'), (_) => ',')}';
+    final seller = product['seller'] as Map<String, dynamic>?;
+    final sellerName = '${seller?['display_name'] ?? seller?['username'] ?? ''}';
+
+    Uint8List? thumb;
+    if (images.isNotEmpty) {
+      final comma = images.first.indexOf(',');
+      if (comma >= 0) {
+        try { thumb = base64Decode(images.first.substring(comma + 1)); } catch (_) {}
+      }
+    }
+
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        decoration: BoxDecoration(
+          color: AppTheme.surface,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: AppTheme.border),
+        ),
+        clipBehavior: Clip.antiAlias,
         child: Column(
-          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Icon(Icons.error_outline, color: AppTheme.danger, size: 40),
-            const SizedBox(height: 12),
-            Text(_error!, textAlign: TextAlign.center, style: const TextStyle(color: AppTheme.muted)),
-            const SizedBox(height: 16),
-            FilledButton(onPressed: _load, child: const Text('Retry')),
+            Expanded(
+              flex: 3,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  thumb != null
+                      ? Image.memory(thumb, fit: BoxFit.cover)
+                      : Container(
+                          color: AppTheme.elevated,
+                          child: const Icon(Icons.image_outlined, color: AppTheme.muted, size: 36),
+                        ),
+                  if (isSold)
+                    Container(
+                      color: Colors.black45,
+                      alignment: Alignment.center,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(color: AppTheme.danger, borderRadius: BorderRadius.circular(20)),
+                        child: const Text('SOLD', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 11, letterSpacing: 2)),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            Expanded(
+              flex: 2,
+              child: Padding(
+                padding: const EdgeInsets.all(10),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13, height: 1.3)),
+                    const Spacer(),
+                    Text(priceStr, style: const TextStyle(color: AppTheme.primary, fontWeight: FontWeight.w900, fontSize: 14)),
+                    if (sellerName.isNotEmpty)
+                      Text('@$sellerName', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: AppTheme.muted, fontSize: 10)),
+                  ],
+                ),
+              ),
+            ),
           ],
         ),
-      );
-    }
-    final traders = _traders ?? [];
-    if (traders.isEmpty) {
-      return const EmptyState(
-        icon: Icons.storefront_rounded,
-        title: 'No active traders',
-        message: 'No one is currently advertising to buy or sell. Check back soon, or set your own status in Profile.',
-      );
-    }
-    return RefreshIndicator(
-      onRefresh: () async { await _load(); await _loadStories(); },
-      child: ListView.separated(
-        padding: const EdgeInsets.fromLTRB(0, 8, 0, 96),
-        itemCount: traders.length,
-        separatorBuilder: (_, _) => const SizedBox(height: 10),
-        itemBuilder: (context, i) {
-          final trader = traders[i] as Map<String, dynamic>;
-          return _TraderCard(trader: trader);
-        },
       ),
     );
   }
@@ -230,20 +340,14 @@ class _StoriesRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Always show the row — at minimum the user's own "Add Story" tile
     return SizedBox(
       height: 90,
       child: loading
-          ? const Center(
-              child: SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(strokeWidth: 2)))
+          ? const Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)))
           : ListView(
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
               children: [
-                // ── My story tile ─────────────────────────────────
                 _StoryTile(
                   label: 'My Story',
                   avatarUrl: '',
@@ -252,13 +356,12 @@ class _StoriesRow extends StatelessWidget {
                   viewed: false,
                   onTap: myStory != null ? onMyStory : onAddStory,
                 ),
-                // ── Other users' stories ──────────────────────────
                 for (final story in stories) ...[
                   const SizedBox(width: 12),
                   _StoryTile(
                     label: () {
                       final u = story['user'] as Map<String, dynamic>?;
-                      return '${u?['display_name'] ?? u?['username'] ?? 'Trader'}';
+                      return '${u?['display_name'] ?? u?['username'] ?? 'User'}';
                     }(),
                     avatarUrl: () {
                       final u = story['user'] as Map<String, dynamic>?;
@@ -316,24 +419,16 @@ class _StoryTile extends StatelessWidget {
                   height: 56,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    border: Border.all(
-                      color: ringColor,
-                      width: hasStory || isMe ? 2.5 : 0,
-                    ),
+                    border: Border.all(color: ringColor, width: hasStory || isMe ? 2.5 : 0),
                   ),
                   padding: const EdgeInsets.all(2),
                   child: ClipOval(
                     child: isMe && !hasStory
                         ? Container(
                             color: AppTheme.elevated,
-                            child: const Icon(Icons.add_rounded,
-                                color: AppTheme.primary, size: 26),
+                            child: const Icon(Icons.add_rounded, color: AppTheme.primary, size: 26),
                           )
-                        : AssetAvatar(
-                            label: label,
-                            imageUrl: avatarUrl,
-                            size: 48,
-                          ),
+                        : AssetAvatar(label: label, imageUrl: avatarUrl, size: 48),
                   ),
                 ),
                 if (isMe && !hasStory)
@@ -343,10 +438,7 @@ class _StoryTile extends StatelessWidget {
                     child: Container(
                       width: 18,
                       height: 18,
-                      decoration: const BoxDecoration(
-                        color: AppTheme.primary,
-                        shape: BoxShape.circle,
-                      ),
+                      decoration: const BoxDecoration(color: AppTheme.primary, shape: BoxShape.circle),
                       child: const Icon(Icons.add, color: Colors.white, size: 12),
                     ),
                   ),
@@ -358,228 +450,11 @@ class _StoryTile extends StatelessWidget {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 10,
-                fontWeight: FontWeight.w600,
-                color: viewed ? AppTheme.muted : AppTheme.text,
-              ),
+              style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: viewed ? AppTheme.muted : AppTheme.text),
             ),
           ],
         ),
       ),
     );
-  }
-}
-
-class _FilterBar extends StatelessWidget {
-  const _FilterBar({
-    required this.filterType,
-    required this.filterCoin,
-    required this.onChanged,
-  });
-
-  final String? filterType;
-  final String? filterCoin;
-  final void Function(String? type, String? coin) onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-      child: Row(
-        children: [
-          _Chip(
-            label: 'All',
-            selected: filterType == null,
-            onTap: () => onChanged(null, filterCoin),
-          ),
-          const SizedBox(width: 8),
-          _Chip(
-            label: 'Sellers',
-            selected: filterType == 'selling',
-            onTap: () => onChanged(filterType == 'selling' ? null : 'selling', filterCoin),
-          ),
-          const SizedBox(width: 8),
-          _Chip(
-            label: 'Buyers',
-            selected: filterType == 'buying',
-            onTap: () => onChanged(filterType == 'buying' ? null : 'buying', filterCoin),
-          ),
-          const SizedBox(width: 16),
-          for (final coin in ['BTC', 'ETH', 'USDT', 'USDC']) ...[
-            _Chip(
-              label: coin,
-              selected: filterCoin == coin,
-              onTap: () => onChanged(filterType, filterCoin == coin ? null : coin),
-            ),
-            const SizedBox(width: 8),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-class _Chip extends StatelessWidget {
-  const _Chip({required this.label, required this.selected, required this.onTap});
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 150),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-        decoration: BoxDecoration(
-          color: selected ? AppTheme.primary : AppTheme.elevated,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: selected ? AppTheme.primary : AppTheme.border),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            color: selected ? Colors.white : AppTheme.text,
-            fontSize: 13,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _TraderCard extends ConsumerWidget {
-  const _TraderCard({required this.trader});
-  final Map<String, dynamic> trader;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final status = trader['trade_status'] as Map<String, dynamic>?;
-    if (status == null) return const SizedBox.shrink();
-
-    final name = '${trader['display_name'] ?? trader['username'] ?? 'Trader'}';
-    final username = '${trader['username'] ?? ''}';
-    final avatarUrl = '${trader['avatar_url'] ?? ''}';
-    final type = '${status['type'] ?? ''}';
-    final coin = '${status['coin'] ?? ''}';
-    final network = '${status['network'] ?? ''}';
-    final paymentMethod = '${status['payment_method'] ?? ''}';
-    final rate = status['rate'] != null
-        ? double.tryParse('${status['rate']}')
-        : null;
-    final currency = (trader['bank_accounts'] as List?)?.isNotEmpty == true
-        ? '${(trader['bank_accounts'] as List).first['currency'] ?? ''}'
-        : '';
-
-    final isSelling = type == 'selling';
-    final typeColor = isSelling ? AppTheme.success : AppTheme.accent;
-    final typeLabel = isSelling ? 'Selling' : 'Buying';
-
-    return GestureDetector(
-      onTap: () => _openChat(context, ref, trader),
-      child: ExchangeCard(
-        padding: const EdgeInsets.all(16),
-        child: Row(
-          children: [
-            AssetAvatar(label: name, imageUrl: avatarUrl, size: 46),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          name,
-                          style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                        decoration: BoxDecoration(
-                          color: typeColor.withValues(alpha: 0.15),
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: Text(
-                          '$typeLabel $coin',
-                          style: TextStyle(color: typeColor, fontSize: 11, fontWeight: FontWeight.w800),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 3),
-                  Text(
-                    '@$username · $network',
-                    style: const TextStyle(color: AppTheme.muted, fontSize: 12),
-                  ),
-                  if (rate != null && currency.isNotEmpty) ...[
-                    const SizedBox(height: 2),
-                    Text(
-                      'Rate: ${rate.toStringAsFixed(2)} $currency/$coin',
-                      style: const TextStyle(color: AppTheme.muted, fontSize: 12),
-                    ),
-                  ],
-                  if (paymentMethod.isNotEmpty) ...[
-                    const SizedBox(height: 2),
-                    Text(
-                      'via $paymentMethod',
-                      style: const TextStyle(color: AppTheme.muted, fontSize: 12),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-            const SizedBox(width: 8),
-            const Icon(Icons.chat_bubble_outline_rounded, color: AppTheme.muted, size: 20),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Future<void> _openChat(BuildContext context, WidgetRef ref, Map<String, dynamic> trader) async {
-    final myId = ref.read(authControllerProvider).user?['id'];
-    final traderId = '${trader['id'] ?? ''}';
-    if (traderId.isEmpty || traderId == myId) return;
-
-    try {
-      final conversationId = await ref.read(chatRepositoryProvider).openDirect(traderId);
-      if (!context.mounted) return;
-      // Build a minimal conversation map for ChatScreen
-      final conversation = {
-        'id': conversationId,
-        'is_group': false,
-        'name': null,
-        'last_message_at': null,
-        'unread_count': 0,
-        'conversation_members': [
-          {
-            'user_id': traderId,
-            'profiles': trader,
-          },
-          {
-            'user_id': myId,
-            'profiles': ref.read(authControllerProvider).user,
-          },
-        ],
-        'messages': [],
-      };
-      Navigator.push(
-        context,
-        MaterialPageRoute(builder: (_) => ChatScreen(conversation: conversation)),
-      );
-    } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('$e')),
-        );
-      }
-    }
   }
 }

@@ -26,6 +26,7 @@ class _StoryViewerState extends ConsumerState<StoryViewer>
   late final AnimationController _progress;
   bool _viewMarked = false;
   bool _loadingReply = false;
+  bool _deleting = false;
 
   @override
   void initState() {
@@ -54,6 +55,37 @@ class _StoryViewerState extends ConsumerState<StoryViewer>
           .read(storyRepositoryProvider)
           .markViewed('${widget.story['id']}');
     } catch (_) {}
+  }
+
+  Future<void> _deleteStory() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Delete story?'),
+        content: const Text('This story will be removed for everyone.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true || !mounted) return;
+    setState(() => _deleting = true);
+    _progress.stop();
+    try {
+      await ref.read(storyRepositoryProvider).deleteMyStory();
+      if (mounted) Navigator.pop(context, 'deleted');
+    } catch (e) {
+      if (mounted) {
+        showApiError(context, e);
+        setState(() => _deleting = false);
+        _progress.forward();
+      }
+    }
   }
 
   Future<void> _reply() async {
@@ -195,6 +227,20 @@ class _StoryViewerState extends ConsumerState<StoryViewer>
                           ],
                         ),
                       ),
+                      if (widget.isOwnStory)
+                        GestureDetector(
+                          onTap: _deleting ? null : _deleteStory,
+                          child: _deleting
+                              ? const SizedBox(
+                                  width: 24,
+                                  height: 24,
+                                  child: CircularProgressIndicator(
+                                      strokeWidth: 2, color: Colors.white),
+                                )
+                              : const Icon(Icons.delete_outline,
+                                  color: Colors.white, size: 24),
+                        ),
+                      const SizedBox(width: 12),
                       GestureDetector(
                         onTap: () => Navigator.pop(context),
                         child: const Icon(Icons.close,
@@ -286,6 +332,8 @@ class _StoryViewerState extends ConsumerState<StoryViewer>
     );
   }
 }
+
+
 
 class _StoryImage extends StatelessWidget {
   const _StoryImage({required this.dataUrl});

@@ -64,6 +64,23 @@ class ChatRepository {
     await _api.post('/chat/conversations/$conversationId/story-replies', params);
   }
 
+  Future<void> sendProductInquiry({
+    required String conversationId,
+    String? body,
+    String? productId,
+    String? productTitle,
+    double? productPrice,
+    String? productImageDataUrl,
+  }) async {
+    final params = <String, dynamic>{};
+    if (body != null && body.isNotEmpty) params['body'] = body;
+    if (productId != null) params['product_id'] = productId;
+    if (productTitle != null) params['product_title'] = productTitle;
+    if (productPrice != null) params['product_price'] = productPrice;
+    if (productImageDataUrl != null) params['product_image_data_url'] = productImageDataUrl;
+    await _api.post('/chat/conversations/$conversationId/product-inquiries', params);
+  }
+
   Future<void> sendTransfer({
     required String conversationId,
     required String recipientId,

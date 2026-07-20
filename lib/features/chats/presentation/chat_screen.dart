@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:audioplayers/audioplayers.dart';
+import 'package:just_audio/just_audio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
@@ -18,19 +18,25 @@ import '../../../shared/widgets/exchange_ui.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../calls/data/call_repository.dart';
 import '../../calls/presentation/outgoing_call_screen.dart';
-import '../../offers/presentation/offer_widgets.dart';
+// import '../../offers/presentation/offer_widgets.dart'; // crypto — hidden
 import '../data/chat_repository.dart';
 import 'chat_helpers.dart';
 import 'new_chat_screen.dart';
-import 'propose_trade_dialog.dart';
-import 'trade_chat_card.dart';
-import 'transfer_dialog.dart';
+// import 'propose_trade_dialog.dart'; // crypto — hidden
+// import 'trade_chat_card.dart'; // crypto — hidden
+// import 'transfer_dialog.dart'; // crypto — hidden
 
 class ChatScreen extends ConsumerStatefulWidget {
-  const ChatScreen({super.key, required this.conversation, this.storyReply});
+  const ChatScreen({
+    super.key,
+    required this.conversation,
+    this.storyReply,
+    this.productInquiry,
+  });
 
   final Map<String, dynamic> conversation;
   final Map<String, dynamic>? storyReply;
+  final Map<String, dynamic>? productInquiry;
 
   @override
   ConsumerState<ChatScreen> createState() => _ChatScreenState();
@@ -47,12 +53,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   String? _loadError;
   StreamSubscription<Map<String, dynamic>>? _msgSub;
   bool sending = false;
-  bool transferring = false;
+  // bool transferring = false; // crypto — hidden
   bool recording = false;
   bool startingCall = false;
   int recordingMs = 0;
   Timer? recordingTimer;
   Map<String, dynamic>? _storyReply;
+  Map<String, dynamic>? _productInquiry;
 
   String get id => widget.conversation['id'] as String;
   ConversationMeta get meta => conversationMeta(
@@ -64,6 +71,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   void initState() {
     super.initState();
     _storyReply = widget.storyReply;
+    _productInquiry = widget.productInquiry;
     _loadMessages().then((_) { if (mounted) _initSocket(); });
   }
 
@@ -110,24 +118,31 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   Future<void> send() async {
     final body = text.text.trim();
     final reply = _storyReply;
-    if (body.isEmpty && reply == null) return;
+    final inquiry = _productInquiry;
+    if (body.isEmpty && reply == null && inquiry == null) return;
 
-    // Optimistic: show message immediately with a pending (clock) indicator
     final myId = ref.read(authControllerProvider).user?['id'] as String?;
     final tempId = 'pending_${DateTime.now().millisecondsSinceEpoch}';
     text.clear();
     setState(() {
       _storyReply = null;
+      _productInquiry = null;
       _messages.add({
         'id': tempId,
         'conversation_id': id,
         'sender_id': myId,
-        'kind': reply != null ? 'story_reply' : 'text',
+        'kind': reply != null ? 'story_reply' : (inquiry != null ? 'product_inquiry' : 'text'),
         'body': body,
         if (reply != null) ...{
           'story_reply_image_data_url': reply['image_data_url'],
           'story_reply_caption': reply['text'],
           'story_reply_poster_name': _posterName(reply),
+        },
+        if (inquiry != null) ...{
+          'product_id': inquiry['id'],
+          'product_title': inquiry['title'],
+          'product_price': inquiry['price'],
+          'product_image_data_url': inquiry['image_data_url'],
         },
         'read_by': <dynamic>[],
         'created_at': DateTime.now().toUtc().toIso8601String(),
@@ -138,7 +153,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
     try {
       if (reply != null) {
-        // Story replies always use REST — no WS path for this kind
         await ref.read(chatRepositoryProvider).sendStoryReply(
           conversationId: id,
           body: body.isEmpty ? null : body,
@@ -147,9 +161,18 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           storyReplyPosterName: _posterName(reply),
         );
         if (mounted) await _loadMessages(silent: true);
+      } else if (inquiry != null) {
+        await ref.read(chatRepositoryProvider).sendProductInquiry(
+          conversationId: id,
+          body: body.isEmpty ? null : body,
+          productId: inquiry['id'] as String?,
+          productTitle: inquiry['title'] as String?,
+          productPrice: (inquiry['price'] as num?)?.toDouble(),
+          productImageDataUrl: inquiry['image_data_url'] as String?,
+        );
+        if (mounted) await _loadMessages(silent: true);
       } else if (_socketSvc.connected) {
         await _socketSvc.sendText(id, body);
-        // WS listener already added the real message; drop the optimistic copy
       } else {
         await ref.read(chatRepositoryProvider).sendMessage(id, body);
         await _loadMessages(silent: true);
@@ -159,6 +182,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         setState(() {
           _messages.removeWhere((m) => m['id'] == tempId);
           _storyReply = reply;
+          _productInquiry = inquiry;
           text.text = body;
         });
         showError(context, error);
@@ -285,37 +309,38 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     }
   }
 
-  Future<void> transfer() async {
-    final recipient = meta.otherId;
-    if (recipient == null || transferring) return;
-    final payload = await showDialog<TransferPayload>(
-      context: context,
-      builder: (_) => TransferDialog(recipientName: meta.title),
-    );
-    if (payload == null) return;
-    setState(() => transferring = true);
-    try {
-      await ref.read(chatRepositoryProvider).sendTransfer(
-        conversationId: id,
-        recipientId: recipient,
-        asset: payload.asset,
-        amount: payload.amount,
-        note: payload.note,
-      );
-      if (!_socketSvc.connected) await _loadMessages(silent: true);
-      if (mounted) {
-        await showApiSuccess(
-          context,
-          title: 'Transfer sent',
-          message: '${payload.amount} ${payload.asset} was sent to ${meta.title}.',
-        );
-      }
-    } catch (error) {
-      if (mounted) showError(context, error);
-    } finally {
-      if (mounted) setState(() => transferring = false);
-    }
-  }
+  // crypto — hidden
+  // Future<void> transfer() async {
+  //   final recipient = meta.otherId;
+  //   if (recipient == null || transferring) return;
+  //   final payload = await showDialog<TransferPayload>(
+  //     context: context,
+  //     builder: (_) => TransferDialog(recipientName: meta.title),
+  //   );
+  //   if (payload == null) return;
+  //   setState(() => transferring = true);
+  //   try {
+  //     await ref.read(chatRepositoryProvider).sendTransfer(
+  //       conversationId: id,
+  //       recipientId: recipient,
+  //       asset: payload.asset,
+  //       amount: payload.amount,
+  //       note: payload.note,
+  //     );
+  //     if (!_socketSvc.connected) await _loadMessages(silent: true);
+  //     if (mounted) {
+  //       await showApiSuccess(
+  //         context,
+  //         title: 'Transfer sent',
+  //         message: '${payload.amount} ${payload.asset} was sent to ${meta.title}.',
+  //       );
+  //     }
+  //   } catch (error) {
+  //     if (mounted) showError(context, error);
+  //   } finally {
+  //     if (mounted) setState(() => transferring = false);
+  //   }
+  // }
 
   void _scrollToEnd() {
     if (!_scrollCtrl.hasClients) return;
@@ -397,6 +422,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                         story: _storyReply!,
                         onDismiss: () => setState(() => _storyReply = null),
                       ),
+                    if (_productInquiry != null)
+                      _ProductInquiryBanner(
+                        inquiry: _productInquiry!,
+                        onDismiss: () => setState(() => _productInquiry = null),
+                      ),
                     recording ? _buildRecordingBar() : _buildInputBar(),
                   ],
                 ),
@@ -468,40 +498,18 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   Widget _buildInputBar() {
     return Row(
       children: [
-        IconButton(
-          tooltip: 'Send crypto',
-          onPressed: transferring ? null : transfer,
-          style: IconButton.styleFrom(
-            backgroundColor: Colors.transparent,
-            foregroundColor: AppTheme.muted,
-            minimumSize: const Size.square(40),
-            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-          ),
-          icon: transferring
-              ? const SizedBox.square(dimension: 18, child: CircularProgressIndicator(strokeWidth: 2))
-              : const Icon(Icons.currency_exchange_rounded),
-        ),
-        if (meta.otherId != null)
-          IconButton(
-            tooltip: 'Propose trade',
-            onPressed: () => showProposeTradeDialog(
-              context: context,
-              ref: ref,
-              conversationId: id,
-              sellerUserId: meta.otherId!,
-              sellerName: meta.title,
-              onProposed: () {
-                if (!_socketSvc.connected) _loadMessages(silent: true);
-              },
-            ),
-            style: IconButton.styleFrom(
-              backgroundColor: Colors.transparent,
-              foregroundColor: AppTheme.accent,
-              minimumSize: const Size.square(40),
-              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            ),
-            icon: const Icon(Icons.handshake_rounded),
-          ),
+        // crypto — hidden
+        // IconButton(
+        //   tooltip: 'Send crypto',
+        //   onPressed: transferring ? null : transfer,
+        //   ...
+        // ),
+        // if (meta.otherId != null)
+        //   IconButton(
+        //     tooltip: 'Propose trade',
+        //     onPressed: () => showProposeTradeDialog(...),
+        //     icon: const Icon(Icons.handshake_rounded),
+        //   ),
         const SizedBox(width: 4),
         Expanded(
           child: Container(
@@ -551,7 +559,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           valueListenable: text,
           builder: (context, value, _) {
             final hasText = value.text.trim().isNotEmpty;
-            final canSend = hasText || _storyReply != null;
+            final canSend = hasText || _storyReply != null || _productInquiry != null;
             return IconButton(
               tooltip: canSend ? 'Send message' : 'Record voice note',
               onPressed: sending ? null : (canSend ? send : startVoiceNote),
@@ -610,25 +618,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                 : readReceiptLabel(message, ref.read(authControllerProvider).user?['id'] as String?))
             : null;
 
-        if (message['kind'] == 'trade_update') {
-          return Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: Center(
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                decoration: BoxDecoration(
-                  color: AppTheme.elevated,
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: AppTheme.border),
-                ),
-                child: TradeUpdateCard(
-                  body: '${message['body'] ?? ''}',
-                  trade: message['trade'] as Map?,
-                ),
-              ),
-            ),
-          );
-        }
+        // crypto — hidden
+        // if (message['kind'] == 'trade_update') { ... TradeUpdateCard ... }
 
         if (message['kind'] == 'image') {
           return Padding(
@@ -693,10 +684,18 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               mine: mine,
               timestamp: time,
               readReceipt: readReceipt,
-              child: message['kind'] == 'offer'
-                  ? OfferMessageCard(offer: (message['offer'] as Map?) ?? const {})
-                  : message['kind'] == 'trade_proposal'
-                  ? TradeProposalCard(trade: (message['trade'] as Map?) ?? const {})
+              child: /* crypto kinds hidden:
+                  message['kind'] == 'offer' ? OfferMessageCard(...) :
+                  message['kind'] == 'trade_proposal' ? TradeProposalCard(...) :
+                  message['kind'] == 'transfer' ? Row(transfer UI) : */
+                  message['kind'] == 'product_inquiry'
+                  ? _ProductInquiryContent(
+                      imageDataUrl: message['product_image_data_url'] as String?,
+                      title: message['product_title'] as String?,
+                      price: (message['product_price'] as num?)?.toDouble(),
+                      body: message['body'] as String?,
+                      mine: mine,
+                    )
                   : message['kind'] == 'story_reply'
                   ? _StoryReplyContent(
                       imageDataUrl: message['story_reply_image_data_url'] as String?,
@@ -710,20 +709,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                       audioDataUrl: '${message['voice_data_url'] ?? ''}',
                       durationMs: message['voice_duration_ms'] as int? ?? 0,
                       mine: mine,
-                    )
-                  : message['kind'] == 'transfer'
-                  ? Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(Icons.north_east_rounded, size: 18),
-                        const SizedBox(width: 8),
-                        Flexible(
-                          child: Text(
-                            '${mine ? 'Sent' : 'Received'} ${message['transfer_amount']} ${message['transfer_asset']}\n${message['transfer_note'] ?? ''}',
-                            style: const TextStyle(height: 1.35),
-                          ),
-                        ),
-                      ],
                     )
                   : Text(
                       '${message['body'] ?? ''}',
@@ -822,21 +807,25 @@ class VoiceNoteBubble extends StatefulWidget {
 }
 
 class _VoiceNoteBubbleState extends State<VoiceNoteBubble> {
-  final player = AudioPlayer();
+  final _player = AudioPlayer();
   bool playing = false;
   String? _tempPath;
 
   @override
   void initState() {
     super.initState();
-    player.onPlayerComplete.listen((_) {
-      if (mounted) setState(() => playing = false);
+    // just_audio / ExoPlayer (Android) + AVPlayer (iOS) — far more reliable
+    // codec support than audioplayers / MediaPlayer for AAC-LC M4A files.
+    _player.processingStateStream.listen((state) {
+      if (state == ProcessingState.completed && mounted) {
+        setState(() => playing = false);
+      }
     });
   }
 
   @override
   void dispose() {
-    player.dispose();
+    _player.dispose();
     if (_tempPath != null) {
       try { File(_tempPath!).deleteSync(); } catch (_) {}
     }
@@ -845,7 +834,7 @@ class _VoiceNoteBubbleState extends State<VoiceNoteBubble> {
 
   Future<void> toggle() async {
     if (playing) {
-      await player.stop();
+      await _player.stop();
       if (mounted) setState(() => playing = false);
       return;
     }
@@ -859,10 +848,12 @@ class _VoiceNoteBubbleState extends State<VoiceNoteBubble> {
         await File(_tempPath!).writeAsBytes(bytes);
       }
       debugPrint('[VoiceNote] file size: ${bytes.length} bytes → $_tempPath');
-      await player.play(DeviceFileSource(_tempPath!));
+      await _player.setFilePath(_tempPath!);
+      await _player.play();
       if (mounted) setState(() => playing = true);
     } catch (e) {
       debugPrint('[VoiceNote] playback error: $e');
+      if (mounted) setState(() => playing = false);
     }
   }
 
@@ -984,6 +975,146 @@ Uint8List? _decodeDataUrl(String dataUrl) {
     return base64Decode(dataUrl.substring(comma + 1));
   } catch (_) {
     return null;
+  }
+}
+
+// ── Product inquiry banner shown above the chat input ─────────────────────
+
+class _ProductInquiryBanner extends StatelessWidget {
+  const _ProductInquiryBanner({required this.inquiry, required this.onDismiss});
+  final Map<String, dynamic> inquiry;
+  final VoidCallback onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
+    final imageDataUrl = inquiry['image_data_url'] as String?;
+    final title = '${inquiry['title'] ?? 'Product'}';
+    final price = (inquiry['price'] as num?)?.toDouble();
+    final thumb = imageDataUrl != null ? _decodeDataUrl(imageDataUrl) : null;
+    final priceStr = price != null
+        ? '₦${price.toStringAsFixed(0).replaceAllMapped(RegExp(r'\B(?=(\d{3})+(?!\d))'), (_) => ',')}'
+        : '';
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 6),
+      decoration: BoxDecoration(
+        color: AppTheme.elevated,
+        borderRadius: BorderRadius.circular(12),
+        border: const Border(left: BorderSide(color: AppTheme.accent, width: 3)),
+      ),
+      child: Row(
+        children: [
+          if (thumb != null)
+            ClipRRect(
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(9),
+                bottomLeft: Radius.circular(9),
+              ),
+              child: Image.memory(thumb, width: 48, height: 48, fit: BoxFit.cover),
+            ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: AppTheme.accent, fontSize: 12, fontWeight: FontWeight.w700),
+                  ),
+                  if (priceStr.isNotEmpty)
+                    Text(priceStr, style: const TextStyle(color: AppTheme.muted, fontSize: 12)),
+                ],
+              ),
+            ),
+          ),
+          IconButton(
+            onPressed: onDismiss,
+            icon: const Icon(Icons.close_rounded, size: 16, color: AppTheme.muted),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Product inquiry content inside a chat bubble ───────────────────────────
+
+class _ProductInquiryContent extends StatelessWidget {
+  const _ProductInquiryContent({
+    required this.imageDataUrl,
+    required this.title,
+    required this.price,
+    required this.body,
+    required this.mine,
+  });
+
+  final String? imageDataUrl;
+  final String? title;
+  final double? price;
+  final String? body;
+  final bool mine;
+
+  @override
+  Widget build(BuildContext context) {
+    final thumb = imageDataUrl != null ? _decodeDataUrl(imageDataUrl!) : null;
+    final quoteAccent = mine ? Colors.white.withValues(alpha: 0.72) : AppTheme.accent;
+    final quoteBg = mine ? Colors.white.withValues(alpha: 0.15) : AppTheme.elevated;
+    final subtleText = mine ? Colors.white.withValues(alpha: 0.72) : AppTheme.muted;
+    final priceStr = price != null
+        ? '₦${price!.toStringAsFixed(0).replaceAllMapped(RegExp(r'\B(?=(\d{3})+(?!\d))'), (_) => ',')}'
+        : '';
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          decoration: BoxDecoration(
+            color: quoteBg,
+            borderRadius: BorderRadius.circular(10),
+            border: Border(left: BorderSide(color: quoteAccent, width: 3)),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Flexible(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(10, 8, 8, 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        title ?? 'Product',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(color: quoteAccent, fontSize: 12, fontWeight: FontWeight.w700),
+                      ),
+                      if (priceStr.isNotEmpty)
+                        Text(priceStr, style: TextStyle(color: subtleText, fontSize: 12, fontWeight: FontWeight.w800)),
+                    ],
+                  ),
+                ),
+              ),
+              if (thumb != null)
+                Image.memory(thumb, width: 52, height: 52, fit: BoxFit.cover),
+            ],
+          ),
+        ),
+        if (body != null && body!.isNotEmpty) ...[
+          const SizedBox(height: 6),
+          Text(body!, style: TextStyle(color: mine ? Colors.white : AppTheme.text, height: 1.4)),
+        ],
+      ],
+    );
   }
 }
 

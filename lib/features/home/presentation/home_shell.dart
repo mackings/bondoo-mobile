@@ -18,18 +18,12 @@ class HomeShell extends ConsumerStatefulWidget {
 
 class _HomeShellState extends ConsumerState<HomeShell> {
   int index = 0;
-  bool _setupPromptShown = false;
   bool _verificationPromptShown = false;
 
   bool _needsVerification(Map<String, dynamic>? user) {
     if (user == null || user['email_verified'] != true) return false;
-    return user['virtual_account'] == null;
-  }
-
-  bool _needsSetup(Map<String, dynamic>? user) {
-    if (user == null || user['email_verified'] != true) return false;
-    final bankAccounts = user['bank_accounts'] as List? ?? [];
-    return bankAccounts.isEmpty;
+    final va = user['virtual_account'] as Map?;
+    return va == null || (va['account_number'] as String?)?.isNotEmpty != true;
   }
 
   void _maybeShowVerificationPrompt(Map<String, dynamic>? user) {
@@ -52,69 +46,10 @@ class _HomeShellState extends ConsumerState<HomeShell> {
     });
   }
 
-  void _maybeShowSetupPrompt(Map<String, dynamic>? user) {
-    // Only show bank account prompt once identity is already verified
-    if (_setupPromptShown || !_needsSetup(user) || _needsVerification(user)) return;
-    _setupPromptShown = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      showModalBottomSheet<void>(
-        context: context,
-        showDragHandle: true,
-        backgroundColor: AppTheme.surface,
-        builder: (ctx) => SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Container(
-                  width: 56,
-                  height: 56,
-                  margin: const EdgeInsets.only(bottom: 16),
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    gradient: AppTheme.brandGradient,
-                    borderRadius: BorderRadius.circular(18),
-                  ),
-                  child: const Icon(Icons.account_balance_rounded, color: Colors.white, size: 28),
-                ),
-                Text(
-                  'Complete your setup',
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.titleLarge,
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  'Add your bank account from Profile so you can withdraw your earnings when you make a sale.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: AppTheme.muted, height: 1.5),
-                ),
-                const SizedBox(height: 24),
-                FilledButton.icon(
-                  onPressed: () { Navigator.pop(ctx); setState(() => index = 3); },
-                  icon: const Icon(Icons.person_rounded),
-                  label: const Text('Go to Profile'),
-                ),
-                const SizedBox(height: 8),
-                TextButton(
-                  onPressed: () => Navigator.pop(ctx),
-                  child: const Text('Later'),
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
-    });
-  }
-
   @override
   Widget build(BuildContext context) {
     final user = ref.watch(authControllerProvider).user;
     _maybeShowVerificationPrompt(user);
-    _maybeShowSetupPrompt(user);
 
     // Tab order: Wallet → Chats → Market → Profile
     final pages = [

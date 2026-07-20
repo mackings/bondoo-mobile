@@ -82,34 +82,61 @@ class _IdentityVerificationSheet extends ConsumerStatefulWidget {
 class _IdentityVerificationSheetState
     extends ConsumerState<_IdentityVerificationSheet> {
   String _type = 'bvn';
-  final _ctrl = TextEditingController();
+  final _bvnCtrl     = TextEditingController();
+  final _accountCtrl = TextEditingController();
   bool _submitting = false;
-  bool _submitted = false; // BVN sent, wallet being set up in background
+  bool _submitted  = false;
   String? _error;
+  List<Map<String, dynamic>> _banks = [];
+  Map<String, dynamic>? _selectedBank;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadBanks();
+  }
+
+  Future<void> _loadBanks() async {
+    try {
+      final banks = await ref.read(paystackRepositoryProvider).getBanks();
+      if (mounted) setState(() => _banks = banks.cast<Map<String, dynamic>>());
+    } catch (_) {}
+  }
 
   @override
   void dispose() {
-    _ctrl.dispose();
+    _bvnCtrl.dispose();
+    _accountCtrl.dispose();
     super.dispose();
   }
 
   Future<void> _submit() async {
-    final value = _ctrl.text.trim();
-    if (value.length != 11 || !RegExp(r'^\d+$').hasMatch(value)) {
-      setState(() => _error = 'Must be exactly 11 digits');
+    final bvn     = _bvnCtrl.text.trim();
+    final account = _accountCtrl.text.trim();
+    if (bvn.length != 11 || !RegExp(r'^\d+$').hasMatch(bvn)) {
+      setState(() => _error = 'BVN/NIN must be exactly 11 digits');
+      return;
+    }
+    if (account.length != 10 || !RegExp(r'^\d+$').hasMatch(account)) {
+      setState(() => _error = 'Account number must be exactly 10 digits');
+      return;
+    }
+    if (_selectedBank == null) {
+      setState(() => _error = 'Please select your bank');
       return;
     }
     setState(() { _submitting = true; _error = null; });
     try {
       final result = await ref.read(paystackRepositoryProvider).identifyCustomer(
-        type: _type,
-        value: value,
+        type:          _type,
+        value:         bvn,
+        accountNumber: account,
+        bankCode:      _selectedBank!['code'] as String,
       );
       if (!mounted) return;
       if (result['status'] == 'verified') {
         Navigator.pop(context, true);
       } else {
-        // "submitted" — BVN sent to Paystack, wallet created in background via webhook
         setState(() { _submitting = false; _submitted = true; });
       }
     } catch (e) {
@@ -219,18 +246,41 @@ class _IdentityVerificationSheetState
         ),
         const SizedBox(height: 16),
         TextField(
-          controller: _ctrl,
+          controller: _bvnCtrl,
           keyboardType: TextInputType.number,
           maxLength: 11,
           decoration: InputDecoration(
             labelText: '${_type.toUpperCase()} Number',
             hintText: 'Enter your 11-digit ${_type.toUpperCase()}',
-            errorText: _error,
           ),
-          onChanged: (_) {
-            if (_error != null) setState(() => _error = null);
-          },
+          onChanged: (_) { if (_error != null) setState(() => _error = null); },
         ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _accountCtrl,
+          keyboardType: TextInputType.number,
+          maxLength: 10,
+          decoration: const InputDecoration(
+            labelText: 'Bank Account Number',
+            hintText: 'Your 10-digit account number',
+          ),
+          onChanged: (_) { if (_error != null) setState(() => _error = null); },
+        ),
+        const SizedBox(height: 12),
+        DropdownButtonFormField<Map<String, dynamic>>(
+          initialValue: _selectedBank,
+          isExpanded: true,
+          decoration: const InputDecoration(labelText: 'Bank'),
+          items: _banks.map((bank) => DropdownMenuItem(
+            value: bank,
+            child: Text(bank['name'] as String, overflow: TextOverflow.ellipsis),
+          )).toList(),
+          onChanged: (bank) => setState(() { _selectedBank = bank; if (_error != null) _error = null; }),
+        ),
+        if (_error != null) ...[
+          const SizedBox(height: 10),
+          Text(_error!, style: const TextStyle(color: Colors.red, fontSize: 13)),
+        ],
         const SizedBox(height: 20),
         FilledButton(
           onPressed: _submitting ? null : _submit,

@@ -51,9 +51,15 @@ class PaystackRepository {
   Future<Map<String, dynamic>> identifyCustomer({
     required String type,
     required String value,
+    required String accountNumber,
+    required String bankCode,
   }) async {
-    return await _api.post('/paystack/identify', {'type': type, 'value': value})
-        as Map<String, dynamic>;
+    return await _api.post('/paystack/identify', {
+      'type': type,
+      'value': value,
+      'account_number': accountNumber,
+      'bank_code': bankCode,
+    }) as Map<String, dynamic>;
   }
 
   Future<Map<String, dynamic>> getIdentifyStatus() async {

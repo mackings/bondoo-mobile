@@ -18,13 +18,9 @@ import '../../../shared/widgets/exchange_ui.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../calls/data/call_repository.dart';
 import '../../calls/presentation/outgoing_call_screen.dart';
-// import '../../offers/presentation/offer_widgets.dart'; // crypto — hidden
 import '../data/chat_repository.dart';
 import 'chat_helpers.dart';
 import 'new_chat_screen.dart';
-// import 'propose_trade_dialog.dart'; // crypto — hidden
-// import 'trade_chat_card.dart'; // crypto — hidden
-// import 'transfer_dialog.dart'; // crypto — hidden
 
 class ChatScreen extends ConsumerStatefulWidget {
   const ChatScreen({
@@ -498,18 +494,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   Widget _buildInputBar() {
     return Row(
       children: [
-        // crypto — hidden
-        // IconButton(
-        //   tooltip: 'Send crypto',
-        //   onPressed: transferring ? null : transfer,
-        //   ...
-        // ),
-        // if (meta.otherId != null)
-        //   IconButton(
-        //     tooltip: 'Propose trade',
-        //     onPressed: () => showProposeTradeDialog(...),
-        //     icon: const Icon(Icons.handshake_rounded),
-        //   ),
         const SizedBox(width: 4),
         Expanded(
           child: Container(
@@ -618,9 +602,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                 : readReceiptLabel(message, ref.read(authControllerProvider).user?['id'] as String?))
             : null;
 
-        // crypto — hidden
-        // if (message['kind'] == 'trade_update') { ... TradeUpdateCard ... }
-
         if (message['kind'] == 'image') {
           return Padding(
             padding: const EdgeInsets.only(bottom: 8),
@@ -684,11 +665,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               mine: mine,
               timestamp: time,
               readReceipt: readReceipt,
-              child: /* crypto kinds hidden:
-                  message['kind'] == 'offer' ? OfferMessageCard(...) :
-                  message['kind'] == 'trade_proposal' ? TradeProposalCard(...) :
-                  message['kind'] == 'transfer' ? Row(transfer UI) : */
-                  message['kind'] == 'product_inquiry'
+              child: message['kind'] == 'product_inquiry'
                   ? _ProductInquiryContent(
                       imageDataUrl: message['product_image_data_url'] as String?,
                       title: message['product_title'] as String?,

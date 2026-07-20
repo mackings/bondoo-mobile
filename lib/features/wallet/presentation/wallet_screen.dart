@@ -42,22 +42,23 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
       if (mounted) {
         setState(() {
           _walletData     = results[0] as Map<String, dynamic>;
-          _virtualAccount = results[1] as Map<String, dynamic>;
+          _virtualAccount = results[1];
           _loading = false;
         });
+        if (_virtualAccount == null) _setupVirtualAccount(showError: false);
       }
     } catch (e) {
       if (mounted) setState(() { _loading = false; _error = '$e'; });
     }
   }
 
-  Future<void> _setupVirtualAccount() async {
-    setState(() => _creatingDva = true);
+  Future<void> _setupVirtualAccount({bool showError = true}) async {
+    if (mounted) setState(() => _creatingDva = true);
     try {
       final dva = await ref.read(paystackRepositoryProvider).createVirtualAccount();
       if (mounted) setState(() => _virtualAccount = dva);
     } catch (e) {
-      if (mounted) showApiError(context, e, title: 'Could not create account');
+      if (mounted && showError) showApiError(context, e, title: 'Could not create account');
     } finally {
       if (mounted) setState(() => _creatingDva = false);
     }
@@ -74,6 +75,8 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
     final user = ref.read(authControllerProvider).user;
     return '${user?['display_name'] ?? user?['username'] ?? 'User'}';
   }
+
+  String get _firstName => _displayName.split(' ').first;
 
   void _copyAccountNumber() {
     final num = _virtualAccount?['account_number'] as String? ?? '';
@@ -133,14 +136,19 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
         child: CustomScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
           slivers: [
-            // ── Header ──────────────────────────────────────────────────
-            SliverToBoxAdapter(child: _buildHeader()),
+            // ── Greeting ─────────────────────────────────────────────────
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(22, MediaQuery.of(context).padding.top + 14, 22, 0),
+                child: Text(
+                  'Hello, $_firstName',
+                  style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900, letterSpacing: -0.3),
+                ),
+              ),
+            ),
 
-            // ── Account card ─────────────────────────────────────────────
+            // ── Account card (includes balance + withdraw) ────────────────
             SliverToBoxAdapter(child: _buildAccountCard()),
-
-            // ── Balance + actions ─────────────────────────────────────────
-            SliverToBoxAdapter(child: _buildBalanceSection()),
 
             // ── Orders quick access ───────────────────────────────────────
             SliverToBoxAdapter(child: _buildOrdersSection()),
@@ -164,40 +172,17 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
     );
   }
 
-  Widget _buildHeader() {
-    return Padding(
-      padding: EdgeInsets.fromLTRB(22, MediaQuery.of(context).padding.top + 16, 22, 0),
-      child: Row(
-        children: [
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('My Wallet', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900, letterSpacing: -0.5)),
-              Text(_displayName, style: const TextStyle(color: AppTheme.muted, fontSize: 13, fontWeight: FontWeight.w500)),
-            ],
-          ),
-          const Spacer(),
-          _QuickIconBtn(
-            icon: Icons.refresh_rounded,
-            onTap: _load,
-            tooltip: 'Refresh',
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildAccountCard() {
-    final hasAccount = _virtualAccount != null;
-    final accountNum = '${_virtualAccount?['account_number'] ?? ''}';
-    final bankName = '${_virtualAccount?['bank_name'] ?? ''}';
+    final accountNum = '${_virtualAccount?['accountNumber'] ?? ''}';
+    final bankName   = '${_virtualAccount?['bankName'] ?? ''}';
+    final acctName   = '${_virtualAccount?['accountName'] ?? _displayName}';
     final displayNum = accountNum.length == 10
         ? '${accountNum.substring(0, 3)} ${accountNum.substring(3, 6)} ${accountNum.substring(6)}'
         : accountNum;
 
     return Container(
-      margin: const EdgeInsets.fromLTRB(20, 22, 20, 0),
-      height: 180,
+      margin: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+      clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(24),
         gradient: const LinearGradient(
@@ -206,113 +191,79 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
           end: Alignment.bottomRight,
         ),
         boxShadow: [
-          BoxShadow(
-            color: const Color(0xff6C22A6).withValues(alpha: 0.4),
-            blurRadius: 28,
-            offset: const Offset(0, 12),
-          ),
+          BoxShadow(color: const Color(0xff6C22A6).withValues(alpha: 0.4), blurRadius: 28, offset: const Offset(0, 12)),
         ],
       ),
       child: Stack(
         children: [
-          // Decorative circles
-          Positioned(
-            top: -30,
-            right: -20,
-            child: Container(
-              width: 130,
-              height: 130,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: Colors.white.withValues(alpha: 0.05),
-              ),
-            ),
-          ),
-          Positioned(
-            bottom: -40,
-            left: 60,
-            child: Container(
-              width: 160,
-              height: 160,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: Colors.white.withValues(alpha: 0.04),
-              ),
-            ),
-          ),
-          // Card content
+          Positioned(top: -30, right: -20,
+            child: Container(width: 130, height: 130,
+              decoration: BoxDecoration(shape: BoxShape.circle, color: Colors.white.withValues(alpha: 0.05)))),
+          Positioned(bottom: -40, left: 60,
+            child: Container(width: 160, height: 160,
+              decoration: BoxDecoration(shape: BoxShape.circle, color: Colors.white.withValues(alpha: 0.04)))),
           Padding(
-            padding: const EdgeInsets.all(22),
+            padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // ── Balance ──────────────────────────────────────────────
                 Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    Row(
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Container(
-                          width: 28, height: 28,
-                          decoration: const BoxDecoration(
-                            shape: BoxShape.circle,
-                            gradient: LinearGradient(
-                              colors: [AppTheme.primary, AppTheme.primaryBright],
-                            ),
-                          ),
-                          child: const Icon(Icons.bolt_rounded, color: Colors.white, size: 16),
-                        ),
-                        const SizedBox(width: 8),
-                        const Text(
-                          'Bondoo',
-                          style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 15, letterSpacing: 0.5),
-                        ),
+                        const Text('Available Balance', style: TextStyle(color: Colors.white54, fontSize: 10, fontWeight: FontWeight.w600)),
+                        const SizedBox(height: 2),
+                        _balanceVisible
+                            ? Text(_nairaFmt.format(_balance),
+                                style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900, letterSpacing: -0.5))
+                            : const Text('₦ ••••••',
+                                style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900, letterSpacing: 2)),
                       ],
                     ),
                     const Spacer(),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.12),
-                        borderRadius: BorderRadius.circular(20),
+                    GestureDetector(
+                      onTap: () => setState(() => _balanceVisible = !_balanceVisible),
+                      child: Icon(
+                        _balanceVisible ? Icons.visibility_outlined : Icons.visibility_off_outlined,
+                        color: Colors.white54, size: 18,
                       ),
-                      child: const Text('SAVINGS', style: TextStyle(color: Colors.white70, fontSize: 10, fontWeight: FontWeight.w800, letterSpacing: 1.5)),
                     ),
                   ],
                 ),
-                const Spacer(),
-                if (hasAccount) ...[
-                  Text(
-                    displayNum,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 22,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: 2,
-                      fontFamily: 'monospace',
-                    ),
-                  ),
-                  const SizedBox(height: 6),
+                const SizedBox(height: 12),
+                Container(height: 1, color: Colors.white.withValues(alpha: 0.12)),
+                const SizedBox(height: 12),
+                // ── Account details ──────────────────────────────────────
+                if (_creatingDva) ...[
+                  const Row(children: [
+                    SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white54)),
+                    SizedBox(width: 8),
+                    Text('Setting up your account...', style: TextStyle(color: Colors.white54, fontSize: 11)),
+                  ]),
+                ] else if (_virtualAccount != null) ...[
+                  Text(displayNum,
+                    style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w900, letterSpacing: 2, fontFamily: 'monospace')),
+                  const SizedBox(height: 4),
                   Row(
                     children: [
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(
-                              _displayName.toUpperCase(),
-                              style: const TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 0.8),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              bankName,
-                              style: const TextStyle(color: Colors.white38, fontSize: 11),
-                            ),
+                            Text(acctName.toUpperCase(),
+                              style: const TextStyle(color: Colors.white70, fontSize: 10, fontWeight: FontWeight.w700, letterSpacing: 0.8)),
+                            const SizedBox(height: 1),
+                            Text(bankName, style: const TextStyle(color: Colors.white38, fontSize: 10)),
                           ],
                         ),
                       ),
                       GestureDetector(
                         onTap: _copyAccountNumber,
                         child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                           decoration: BoxDecoration(
                             color: Colors.white.withValues(alpha: 0.15),
                             borderRadius: BorderRadius.circular(20),
@@ -321,95 +272,31 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
                           child: const Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Icon(Icons.copy_rounded, color: Colors.white, size: 13),
-                              SizedBox(width: 5),
-                              Text('Copy', style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700)),
+                              Icon(Icons.copy_rounded, color: Colors.white, size: 11),
+                              SizedBox(width: 4),
+                              Text('Copy', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w700)),
                             ],
                           ),
                         ),
                       ),
                     ],
                   ),
-                ] else ...[
-                  const Text('No virtual account yet', style: TextStyle(color: Colors.white54, fontSize: 13)),
-                  const SizedBox(height: 10),
-                  GestureDetector(
-                    onTap: _creatingDva ? null : _setupVirtualAccount,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                      decoration: BoxDecoration(
-                        color: AppTheme.primary.withValues(alpha: 0.85),
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: _creatingDva
-                          ? const SizedBox.square(dimension: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                          : const Text('Get Account Number', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 12)),
-                    ),
-                  ),
                 ],
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildBalanceSection() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: AppTheme.surface,
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: AppTheme.border),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    const Text('Available Balance', style: TextStyle(color: AppTheme.muted, fontSize: 12, fontWeight: FontWeight.w600)),
-                    const Spacer(),
-                    GestureDetector(
-                      onTap: () => setState(() => _balanceVisible = !_balanceVisible),
-                      child: Icon(
-                        _balanceVisible ? Icons.visibility_outlined : Icons.visibility_off_outlined,
-                        color: AppTheme.muted,
-                        size: 18,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 200),
-                  child: _balanceVisible
-                      ? Text(
-                          _nairaFmt.format(_balance),
-                          key: const ValueKey('visible'),
-                          style: const TextStyle(fontSize: 32, fontWeight: FontWeight.w900, letterSpacing: -1, color: AppTheme.text),
-                        )
-                      : const Text(
-                          '₦ ••••••',
-                          key: ValueKey('hidden'),
-                          style: TextStyle(fontSize: 32, fontWeight: FontWeight.w900, letterSpacing: 2, color: AppTheme.muted),
-                        ),
-                ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 12),
+                // ── Withdraw button ──────────────────────────────────────
                 SizedBox(
                   width: double.infinity,
-                  child: FilledButton.icon(
+                  child: OutlinedButton.icon(
                     onPressed: _balance > 0 ? _showWithdrawSheet : null,
-                    icon: const Icon(Icons.arrow_upward_rounded, size: 18),
+                    icon: const Icon(Icons.arrow_upward_rounded, size: 14),
                     label: const Text('Withdraw to Bank'),
-                    style: FilledButton.styleFrom(
-                      backgroundColor: AppTheme.primary,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.white,
+                      disabledForegroundColor: Colors.white30,
+                      side: const BorderSide(color: Colors.white30),
+                      padding: const EdgeInsets.symmetric(vertical: 9),
+                      minimumSize: const Size(0, 36),
+                      textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
                     ),
                   ),
                 ),
@@ -471,34 +358,6 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-// ── Quick icon button ─────────────────────────────────────────────────────────
-
-class _QuickIconBtn extends StatelessWidget {
-  const _QuickIconBtn({required this.icon, required this.onTap, this.tooltip});
-  final IconData icon;
-  final VoidCallback onTap;
-  final String? tooltip;
-
-  @override
-  Widget build(BuildContext context) {
-    return Tooltip(
-      message: tooltip ?? '',
-      child: GestureDetector(
-        onTap: onTap,
-        child: Container(
-          width: 40, height: 40,
-          decoration: BoxDecoration(
-            color: AppTheme.elevated,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: AppTheme.border),
-          ),
-          child: Icon(icon, color: AppTheme.muted, size: 20),
-        ),
       ),
     );
   }
@@ -664,7 +523,7 @@ class _WithdrawSheetState extends State<_WithdrawSheet> {
     setState(() => _submitting = true);
     try {
       await widget.paystackRepo.withdraw(
-        amount: double.parse(_amountCtrl.text.trim()),
+        amount: double.parse(_amountCtrl.text.trim().replaceAll(',', '')),
         accountNumber: _accountCtrl.text.trim(),
         bankCode: '${_selectedBank!['code']}',
         accountName: _accountNameCtrl.text.trim(),
@@ -698,10 +557,11 @@ class _WithdrawSheetState extends State<_WithdrawSheet> {
               const SizedBox(height: 20),
               TextFormField(
                 controller: _amountCtrl,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                keyboardType: TextInputType.number,
+                inputFormatters: [_thousandsFormatter],
                 decoration: const InputDecoration(labelText: 'Amount (₦)', prefixText: '₦ '),
                 validator: (v) {
-                  final d = double.tryParse(v?.trim() ?? '');
+                  final d = double.tryParse(v?.trim().replaceAll(',', '') ?? '');
                   if (d == null || d < 100) return 'Minimum ₦100';
                   if (d > widget.balance) return 'Exceeds balance';
                   return null;
@@ -711,6 +571,7 @@ class _WithdrawSheetState extends State<_WithdrawSheet> {
               _loadingBanks
                   ? const Center(child: Padding(padding: EdgeInsets.all(8), child: CircularProgressIndicator()))
                   : DropdownButtonFormField<Map<String, dynamic>>(
+                      isExpanded: true,
                       decoration: const InputDecoration(labelText: 'Bank'),
                       items: _banks.map((b) => DropdownMenuItem(value: b, child: Text('${b['name']}', overflow: TextOverflow.ellipsis))).toList(),
                       onChanged: (b) { setState(() { _selectedBank = b; _accountNameCtrl.clear(); }); _resolveAccount(); },
@@ -768,17 +629,17 @@ class _OrderShortcut extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 16),
+        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
         decoration: BoxDecoration(
           color: AppTheme.surface,
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(14),
           border: Border.all(color: AppTheme.border),
         ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(icon, color: AppTheme.primaryBright, size: 24),
-            const SizedBox(height: 8),
+            Icon(icon, color: AppTheme.primaryBright, size: 18),
+            const SizedBox(width: 8),
             Text(label, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 12)),
           ],
         ),
@@ -786,3 +647,18 @@ class _OrderShortcut extends StatelessWidget {
     );
   }
 }
+
+final _thousandsFormatter = TextInputFormatter.withFunction((oldValue, newValue) {
+  final digits = newValue.text.replaceAll(RegExp(r'[^\d]'), '');
+  if (digits.isEmpty) return newValue.copyWith(text: '');
+  final buf = StringBuffer();
+  for (int i = 0; i < digits.length; i++) {
+    if (i > 0 && (digits.length - i) % 3 == 0) buf.write(',');
+    buf.write(digits[i]);
+  }
+  final formatted = buf.toString();
+  return TextEditingValue(
+    text: formatted,
+    selection: TextSelection.collapsed(offset: formatted.length),
+  );
+});

@@ -92,17 +92,46 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
     try {
       final result = await ref.read(paystackRepositoryProvider).initializePayment('${product['id']}');
       final url = result['authorization_url'] as String? ?? '';
+      final reference = result['reference'] as String? ?? '';
       if (url.isEmpty) throw Exception('Could not get payment link');
       final uri = Uri.parse(url);
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
-      } else {
-        throw Exception('Could not open payment page');
+      await launchUrl(uri, mode: LaunchMode.inAppBrowserView);
+      // Chrome Custom Tab has closed — verify the payment
+      if (reference.isNotEmpty && mounted) {
+        await _verifyPayment(reference);
       }
     } catch (e) {
       if (mounted) showApiError(context, e);
     } finally {
       if (mounted) setState(() => _paying = false);
+    }
+  }
+
+  Future<void> _verifyPayment(String reference) async {
+    try {
+      final result = await ref.read(paystackRepositoryProvider).verifyPayment(reference);
+      if (!mounted) return;
+      if (result['status'] == 'success') {
+        await showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Payment Successful 🎉'),
+            content: Text('You have purchased "$title" for ₦${(result['amount'] as num?)?.toStringAsFixed(0) ?? price.toStringAsFixed(0)}.'),
+            actions: [
+              FilledButton(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  Navigator.pop(context); // go back to marketplace
+                },
+                child: const Text('Done'),
+              ),
+            ],
+          ),
+        );
+      }
+    } catch (_) {
+      // Webhook handles fulfillment regardless — silently ignore verify errors
     }
   }
 

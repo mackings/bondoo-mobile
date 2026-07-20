@@ -48,33 +48,22 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
     setState(() => busy = true);
     try {
       final auth = ref.read(authControllerProvider.notifier);
-      var emailOtpSent = true;
       if (signup) {
-        final result = await auth.signUp(
+        await auth.signUp(
           email: email.text.trim(),
           password: password.text,
           displayName: displayName.text.trim(),
           phone: phone.text.trim(),
         );
-        emailOtpSent = result['email_otp_sent'] != false;
+        // Session is now persisted — AuthGate routes to EmailVerificationScreen
       } else {
         await auth.signIn(email: email.text.trim(), password: password.text);
-      }
-      if (mounted) {
-        await showApiSuccess(
-          context,
-          title: signup ? 'Account created' : 'Signed in',
-          message: signup
-              ? emailOtpSent
-                    ? 'Your account has been created. Sign in to verify your email and finish setup.'
-                    : 'Your account was created, but the email code could not be sent. Sign in and tap Send code again on the verification screen.'
-              : 'Welcome back to BONDOO.',
-        );
-        if (signup && mounted) {
-          setState(() {
-            signup = false;
-            password.clear();
-          });
+        if (mounted) {
+          await showApiSuccess(
+            context,
+            title: 'Signed in',
+            message: 'Welcome back to BONDOO.',
+          );
         }
       }
     } catch (error) {
@@ -150,12 +139,13 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                         TextFormField(
                           controller: displayName,
                           textInputAction: TextInputAction.next,
+                          textCapitalization: TextCapitalization.words,
                           validator: (value) => FormValidators.requiredText(
                             value,
-                            label: 'Display name',
+                            label: 'Full name',
                           ),
                           decoration: const InputDecoration(
-                            labelText: 'Display name',
+                            labelText: 'Full name',
                             prefixIcon: Icon(Icons.person_outline_rounded),
                           ),
                         ),

@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 
@@ -15,6 +16,8 @@ class ProductCreateSheet extends ConsumerStatefulWidget {
   ConsumerState<ProductCreateSheet> createState() => _ProductCreateSheetState();
 }
 
+const _listingCategories = ['Electronics', 'Fashion', 'Food & Drinks', 'Services', 'Others'];
+
 class _ProductCreateSheetState extends ConsumerState<ProductCreateSheet> {
   final _formKey = GlobalKey<FormState>();
   final _titleCtrl = TextEditingController();
@@ -22,6 +25,7 @@ class _ProductCreateSheetState extends ConsumerState<ProductCreateSheet> {
   final _priceCtrl = TextEditingController();
   final _picker = ImagePicker();
   final List<String> _images = [];
+  String _category = _listingCategories.first;
   bool _submitting = false;
 
   @override
@@ -69,8 +73,9 @@ class _ProductCreateSheetState extends ConsumerState<ProductCreateSheet> {
       await ref.read(productRepositoryProvider).createProduct(
             title: _titleCtrl.text.trim(),
             description: _descCtrl.text.trim().isEmpty ? null : _descCtrl.text.trim(),
-            price: double.parse(_priceCtrl.text.trim()),
+            price: double.parse(_priceCtrl.text.trim().replaceAll(',', '')),
             images: _images,
+            category: _category,
           );
       if (mounted) Navigator.pop(context, 'created');
     } catch (e) {
@@ -173,13 +178,51 @@ class _ProductCreateSheetState extends ConsumerState<ProductCreateSheet> {
               const SizedBox(height: 12),
               TextFormField(
                 controller: _priceCtrl,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                keyboardType: TextInputType.number,
+                inputFormatters: [_thousandsFormatter],
                 decoration: const InputDecoration(labelText: 'Price (₦) *', prefixText: '₦ '),
                 validator: (v) {
-                  final d = double.tryParse(v?.trim() ?? '');
+                  final d = double.tryParse(v?.trim().replaceAll(',', '') ?? '');
                   if (d == null || d <= 0) return 'Enter a valid price';
                   return null;
                 },
+              ),
+              const SizedBox(height: 16),
+
+              // Category
+              const Text('Category', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppTheme.muted)),
+              const SizedBox(height: 8),
+              SizedBox(
+                height: 36,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: _listingCategories.length,
+                  separatorBuilder: (_, _) => const SizedBox(width: 8),
+                  itemBuilder: (_, i) {
+                    final cat = _listingCategories[i];
+                    final selected = _category == cat;
+                    return GestureDetector(
+                      onTap: () => setState(() => _category = cat),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 160),
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+                        decoration: BoxDecoration(
+                          color: selected ? AppTheme.primary : AppTheme.elevated,
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: selected ? AppTheme.primary : AppTheme.border),
+                        ),
+                        child: Text(
+                          cat,
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: selected ? Colors.white : AppTheme.muted,
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
               ),
               const SizedBox(height: 20),
               FilledButton.icon(
@@ -199,3 +242,18 @@ class _ProductCreateSheetState extends ConsumerState<ProductCreateSheet> {
     );
   }
 }
+
+final _thousandsFormatter = TextInputFormatter.withFunction((oldValue, newValue) {
+  final digits = newValue.text.replaceAll(RegExp(r'[^\d]'), '');
+  if (digits.isEmpty) return newValue.copyWith(text: '');
+  final buf = StringBuffer();
+  for (int i = 0; i < digits.length; i++) {
+    if (i > 0 && (digits.length - i) % 3 == 0) buf.write(',');
+    buf.write(digits[i]);
+  }
+  final formatted = buf.toString();
+  return TextEditingValue(
+    text: formatted,
+    selection: TextSelection.collapsed(offset: formatted.length),
+  );
+});

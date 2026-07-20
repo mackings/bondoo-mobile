@@ -23,11 +23,9 @@ class ProfileRepository {
 
   Future<void> saveProfile({
     required String displayName,
-    required String username,
   }) async {
     await _api.patch('/me/profile', {
       'display_name': displayName,
-      'username': username,
     });
   }
 

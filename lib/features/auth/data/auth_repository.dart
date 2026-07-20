@@ -84,7 +84,7 @@ class AuthController extends StateNotifier<AuthState> {
       'password': password,
       'display_name': displayName,
       'phone': phone,
-    }, persistSession: false);
+    });
   }
 
   Future<Map<String, dynamic>> requestPasswordReset({

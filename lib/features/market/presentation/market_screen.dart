@@ -23,6 +23,8 @@ class MarketScreen extends ConsumerStatefulWidget {
   ConsumerState<MarketScreen> createState() => _MarketScreenState();
 }
 
+const _kCategories = ['All', 'Electronics', 'Fashion', 'Food & Drinks', 'Services', 'Others'];
+
 class _MarketScreenState extends ConsumerState<MarketScreen> {
   List<Map<String, dynamic>> _products = [];
   bool _productsLoading = true;
@@ -30,6 +32,10 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
   List<Map<String, dynamic>> _stories = [];
   Map<String, dynamic>? _myStory;
   bool _storiesLoading = true;
+
+  String _search = '';
+  String _category = 'All';
+  final _searchCtrl = TextEditingController();
 
   StreamSubscription<Map<String, dynamic>>? _newStorySub;
   StreamSubscription<String>? _storyDeletedSub;
@@ -45,7 +51,24 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
   void dispose() {
     _newStorySub?.cancel();
     _storyDeletedSub?.cancel();
+    _searchCtrl.dispose();
     super.dispose();
+  }
+
+  List<Map<String, dynamic>> get _filtered {
+    var list = _products;
+    if (_search.isNotEmpty) {
+      final q = _search.toLowerCase();
+      list = list.where((p) {
+        final title = '${p['title'] ?? ''}'.toLowerCase();
+        final desc = '${p['description'] ?? ''}'.toLowerCase();
+        return title.contains(q) || desc.contains(q);
+      }).toList();
+    }
+    if (_category != 'All') {
+      list = list.where((p) => '${p['category'] ?? ''}' == _category).toList();
+    }
+    return list;
   }
 
   void _subscribeStories() {
@@ -155,6 +178,7 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final filtered = _filtered;
     return Scaffold(
       backgroundColor: AppTheme.background,
       body: SafeArea(
@@ -164,19 +188,21 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
           child: CustomScrollView(
             physics: const AlwaysScrollableScrollPhysics(),
             slivers: [
+              // Header
               SliverToBoxAdapter(
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
+                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
                   child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Text('Market', style: TextStyle(fontSize: 26, fontWeight: FontWeight.w900)),
-                      const Spacer(),
+                      const Text('Marketplace', style: TextStyle(fontSize: 26, fontWeight: FontWeight.w900)),
                       FilledButton.icon(
                         onPressed: _openCreateSheet,
                         icon: const Icon(Icons.add_rounded, size: 18),
-                        label: const Text('List Product'),
+                        label: const Text('Sell'),
                         style: FilledButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                          minimumSize: const Size(0, 38),
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
                           textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
                         ),
                       ),
@@ -184,6 +210,93 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
                   ),
                 ),
               ),
+
+              // Search bar
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                  child: Container(
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: AppTheme.elevated,
+                      borderRadius: BorderRadius.circular(22),
+                      border: Border.all(color: AppTheme.border),
+                    ),
+                    child: Row(
+                      children: [
+                        const SizedBox(width: 12),
+                        const Icon(Icons.search_rounded, color: AppTheme.muted, size: 20),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: TextField(
+                            controller: _searchCtrl,
+                            onChanged: (v) => setState(() => _search = v.trim()),
+                            decoration: const InputDecoration(
+                              hintText: 'Search products...',
+                              border: InputBorder.none,
+                              enabledBorder: InputBorder.none,
+                              focusedBorder: InputBorder.none,
+                              isDense: true,
+                              filled: false,
+                              contentPadding: EdgeInsets.symmetric(vertical: 12),
+                            ),
+                            style: const TextStyle(fontSize: 14),
+                          ),
+                        ),
+                        if (_search.isNotEmpty)
+                          GestureDetector(
+                            onTap: () { _searchCtrl.clear(); setState(() => _search = ''); },
+                            child: const Padding(
+                              padding: EdgeInsets.symmetric(horizontal: 10),
+                              child: Icon(Icons.close_rounded, color: AppTheme.muted, size: 18),
+                            ),
+                          )
+                        else
+                          const SizedBox(width: 10),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+
+              // Category chips
+              SliverToBoxAdapter(
+                child: SizedBox(
+                  height: 36,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+                    itemCount: _kCategories.length,
+                    separatorBuilder: (_, _) => const SizedBox(width: 8),
+                    itemBuilder: (_, i) {
+                      final cat = _kCategories[i];
+                      final selected = _category == cat;
+                      return GestureDetector(
+                        onTap: () => setState(() => _category = cat),
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 180),
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+                          decoration: BoxDecoration(
+                            color: selected ? AppTheme.primary : AppTheme.elevated,
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(color: selected ? AppTheme.primary : AppTheme.border),
+                          ),
+                          child: Text(
+                            cat,
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              color: selected ? Colors.white : AppTheme.muted,
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ),
+
+              const SliverToBoxAdapter(child: SizedBox(height: 14)),
 
               // Stories row
               SliverToBoxAdapter(
@@ -198,22 +311,36 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
               ),
 
               // Products section header
-              const SliverToBoxAdapter(
+              SliverToBoxAdapter(
                 child: Padding(
-                  padding: EdgeInsets.fromLTRB(20, 20, 20, 10),
-                  child: Text('Latest Listings', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
+                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 10),
+                  child: Row(
+                    children: [
+                      const Text('Latest Listings', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
+                      const Spacer(),
+                      if (!_productsLoading)
+                        Text(
+                          '${filtered.length} item${filtered.length == 1 ? '' : 's'}',
+                          style: const TextStyle(color: AppTheme.muted, fontSize: 12),
+                        ),
+                    ],
+                  ),
                 ),
               ),
 
               // Products grid
               if (_productsLoading)
-                const SliverToBoxAdapter(child: Padding(padding: EdgeInsets.only(top: 40), child: Center(child: CircularProgressIndicator())))
-              else if (_products.isEmpty)
                 const SliverToBoxAdapter(
+                  child: Padding(padding: EdgeInsets.only(top: 40), child: Center(child: CircularProgressIndicator())),
+                )
+              else if (filtered.isEmpty)
+                SliverToBoxAdapter(
                   child: EmptyState(
                     icon: Icons.storefront_outlined,
-                    title: 'No listings yet',
-                    message: 'Be the first to list a product. Tap "List Product" to get started.',
+                    title: _search.isNotEmpty || _category != 'All' ? 'No results' : 'No listings yet',
+                    message: _search.isNotEmpty || _category != 'All'
+                        ? 'Try a different search term or category.'
+                        : 'Be the first to list a product. Tap "Sell" to get started.',
                   ),
                 )
               else
@@ -224,7 +351,7 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
                     crossAxisSpacing: 12,
                     mainAxisSpacing: 12,
                     childAspectRatio: 0.72,
-                    children: _products.map((p) => _ProductCard(product: p, onTap: () => _openProduct(p))).toList(),
+                    children: filtered.map((p) => _ProductCard(product: p, onTap: () => _openProduct(p))).toList(),
                   ),
                 ),
             ],

@@ -30,12 +30,14 @@ class ProductRepository {
     String? description,
     required double price,
     required List<String> images,
+    String? category,
   }) async {
     return await _api.post('/products', {
           'title': title,
           if (description != null && description.isNotEmpty) 'description': description,
           'price': price,
           'images': images,
+          if (category != null && category.isNotEmpty) 'category': category,
         }) as Map<String, dynamic>;
   }
 

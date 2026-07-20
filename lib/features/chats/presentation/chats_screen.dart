@@ -9,7 +9,6 @@ import '../../../core/theme/app_theme.dart';
 import '../../../shared/widgets/exchange_ui.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../calls/presentation/call_history_screen.dart';
-import '../../offers/presentation/offers_screen.dart';
 import '../data/chat_repository.dart';
 import 'chat_helpers.dart';
 import 'chat_screen.dart';
@@ -95,7 +94,7 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen> {
   Widget build(BuildContext context) {
     return ExchangeScaffold(
       title: 'Chats',
-      subtitle: 'Message traders and manage offers',
+      subtitle: 'Message buyers and sellers',
       actions: [
         IconButton(
           tooltip: 'Call history',
@@ -136,18 +135,10 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen> {
       );
     }
     if (_conversations.isEmpty) {
-      return EmptyState(
+      return const EmptyState(
         icon: Icons.forum_outlined,
         title: 'No conversations yet',
-        message: 'Find a trader from offers or manage your own P2P ads.',
-        action: FilledButton.icon(
-          onPressed: () => Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const OffersScreen()),
-          ),
-          icon: const Icon(Icons.storefront_rounded),
-          label: const Text('Browse offers'),
-        ),
+        message: 'Start a conversation by tapping a product in the marketplace.',
       );
     }
     return ListView.builder(

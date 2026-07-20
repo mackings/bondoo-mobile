@@ -135,9 +135,7 @@ class _BottomNav extends StatelessWidget {
           ),
         ],
       ),
-      child: SafeArea(
-        top: false,
-        child: Padding(
+      child: Padding(
           padding: const EdgeInsets.fromLTRB(4, 10, 4, 0),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
@@ -152,7 +150,6 @@ class _BottomNav extends StatelessWidget {
             }),
           ),
         ),
-      ),
     );
   }
 }

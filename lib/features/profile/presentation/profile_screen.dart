@@ -31,7 +31,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   final walletFormKey = GlobalKey<FormState>();
   late Future<Map<String, dynamic>> future = load();
   final displayName = TextEditingController();
-  final username = TextEditingController();
   final bankName = TextEditingController();
   final accountName = TextEditingController();
   final accountNumber = TextEditingController();
@@ -73,7 +72,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
           .read(profileRepositoryProvider)
           .saveProfile(
             displayName: displayName.text.trim(),
-            username: username.text.trim().toLowerCase(),
           );
       setState(() {
         future = load();
@@ -257,7 +255,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   @override
   void dispose() {
     displayName.dispose();
-    username.dispose();
     bankName.dispose();
     accountName.dispose();
     accountNumber.dispose();
@@ -288,7 +285,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
             final profileId = '${profile['id'] ?? profile['email'] ?? ''}';
             if (hydratedProfileId != profileId) {
               displayName.text = '${profile['display_name'] ?? ''}';
-              username.text = '${profile['username'] ?? ''}';
               final banks = (profile['bank_accounts'] as List? ?? []);
               if (banks.isNotEmpty) {
                 final bank = banks.first as Map;
@@ -388,11 +384,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                                   '${profile['display_name']}',
                                   style: Theme.of(context).textTheme.titleLarge,
                                 ),
-                                const SizedBox(height: 3),
-                                Text(
-                                  '@${profile['username']}',
-                                  style: const TextStyle(color: Colors.white70),
-                                ),
                               ],
                             ),
                           ),
@@ -455,22 +446,14 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                           children: [
                             TextFormField(
                               controller: displayName,
+                              textCapitalization: TextCapitalization.words,
                               validator: (value) => FormValidators.requiredText(
                                 value,
-                                label: 'Display name',
+                                label: 'Full name',
                               ),
                               decoration: const InputDecoration(
-                                labelText: 'Display name',
+                                labelText: 'Full name',
                                 prefixIcon: Icon(Icons.badge_outlined),
-                              ),
-                            ),
-                            const SizedBox(height: 12),
-                            TextFormField(
-                              controller: username,
-                              validator: FormValidators.username,
-                              decoration: const InputDecoration(
-                                labelText: 'Username',
-                                prefixIcon: Icon(Icons.alternate_email),
                               ),
                             ),
                           ],

@@ -424,6 +424,16 @@ class _ProductCard extends StatelessWidget {
                         decoration: BoxDecoration(color: AppTheme.danger, borderRadius: BorderRadius.circular(20)),
                         child: const Text('SOLD', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 11, letterSpacing: 2)),
                       ),
+                    )
+                  else if ('${product['status']}' == 'out_of_stock')
+                    Positioned(
+                      top: 6,
+                      left: 6,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                        decoration: BoxDecoration(color: Colors.orange.shade700, borderRadius: BorderRadius.circular(10)),
+                        child: const Text('Out of Stock', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 9)),
+                      ),
                     ),
                 ],
               ),

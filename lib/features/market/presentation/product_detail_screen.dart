@@ -27,6 +27,9 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
   int _imageIndex = 0;
   bool _paying = false;
   bool _deleting = false;
+  bool _togglingStock = false;
+  // Local status override so UI updates immediately after seller toggles stock
+  String? _statusOverride;
 
   Map<String, dynamic> get product => widget.product;
 
@@ -38,11 +41,12 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
   String get title => '${product['title'] ?? ''}';
   double get price => (product['price'] as num?)?.toDouble() ?? 0;
   String get description => '${product['description'] ?? ''}';
-  String get status => '${product['status'] ?? 'active'}';
+  String get status => _statusOverride ?? '${product['status'] ?? 'active'}';
+  bool get isOutOfStock => status == 'out_of_stock';
   String get sellerId => '${(product['seller'] as Map?)?['id'] ?? product['seller_id'] ?? ''}';
   String get sellerName {
     final s = product['seller'] as Map<String, dynamic>?;
-    return '${s?['display_name'] ?? s?['username'] ?? 'Seller'}';
+    return '${s?['display_name'] ?? 'Seller'}';
   }
 
   String? get myId => ref.read(authControllerProvider).user?['id'] as String?;
@@ -132,6 +136,18 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
       }
     } catch (_) {
       // Webhook handles fulfillment regardless — silently ignore verify errors
+    }
+  }
+
+  Future<void> _toggleStock() async {
+    if (_togglingStock) return;
+    final newStatus = isOutOfStock ? 'active' : 'out_of_stock';
+    setState(() => _togglingStock = true);
+    try {
+      await ref.read(productRepositoryProvider).updateProductStatus('${product['id']}', newStatus);
+      if (mounted) setState(() { _statusOverride = newStatus; _togglingStock = false; });
+    } catch (e) {
+      if (mounted) { setState(() => _togglingStock = false); showApiError(context, e); }
     }
   }
 
@@ -240,6 +256,22 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                           ),
                         ),
                       ),
+                    )
+                  else if (isOutOfStock)
+                    Positioned(
+                      top: 14,
+                      left: 14,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: Colors.orange.shade700,
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: const Text(
+                          'Out of Stock',
+                          style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 12),
+                        ),
+                      ),
                     ),
                 ],
               ),
@@ -289,31 +321,64 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                     ),
                   ],
                   const SizedBox(height: 28),
+                  // ── Buyer view ──────────────────────────────────────────
                   if (!isOwner && !isSold) ...[
-                    Row(
-                      children: [
-                        Expanded(
-                          child: OutlinedButton.icon(
-                            onPressed: _chatSeller,
-                            icon: const Icon(Icons.chat_bubble_outline_rounded),
-                            label: const Text('Chat Seller'),
-                          ),
+                    if (isOutOfStock) ...[
+                      Container(
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: Colors.orange.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.orange.shade300),
                         ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: FilledButton.icon(
-                            onPressed: _paying ? null : _buyNow,
-                            icon: _paying
-                                ? const SizedBox.square(
-                                    dimension: 16,
-                                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                                  )
-                                : const Icon(Icons.payment_rounded),
-                            label: Text('Buy $priceStr'),
-                          ),
+                        child: const Row(
+                          children: [
+                            Icon(Icons.inventory_2_outlined, color: Colors.orange, size: 18),
+                            SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                'This item is currently out of stock. Chat the seller to ask when it will be available.',
+                                style: TextStyle(color: Colors.orange, fontSize: 13),
+                              ),
+                            ),
+                          ],
                         ),
-                      ],
-                    ),
+                      ),
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          onPressed: _chatSeller,
+                          icon: const Icon(Icons.chat_bubble_outline_rounded),
+                          label: const Text('Chat Seller'),
+                        ),
+                      ),
+                    ] else ...[
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: _chatSeller,
+                              icon: const Icon(Icons.chat_bubble_outline_rounded),
+                              label: const Text('Chat Seller'),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: FilledButton.icon(
+                              onPressed: _paying ? null : _buyNow,
+                              icon: _paying
+                                  ? const SizedBox.square(
+                                      dimension: 16,
+                                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                                    )
+                                  : const Icon(Icons.payment_rounded),
+                              label: Text('Buy $priceStr'),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                   ] else if (isSold) ...[
                     const Center(
                       child: Text(
@@ -321,7 +386,24 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                         style: TextStyle(color: AppTheme.muted, fontWeight: FontWeight.w600),
                       ),
                     ),
+                  // ── Owner view ──────────────────────────────────────────
                   ] else ...[
+                    // Stock toggle
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: _togglingStock ? null : _toggleStock,
+                        icon: _togglingStock
+                            ? const SizedBox.square(dimension: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                            : Icon(isOutOfStock ? Icons.check_circle_outline_rounded : Icons.inventory_2_outlined),
+                        label: Text(isOutOfStock ? 'Mark Back In Stock' : 'Mark as Out of Stock'),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: isOutOfStock ? AppTheme.success : Colors.orange,
+                          side: BorderSide(color: isOutOfStock ? AppTheme.success : Colors.orange),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
                     Container(
                       padding: const EdgeInsets.all(14),
                       decoration: BoxDecoration(
@@ -329,13 +411,13 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                         borderRadius: BorderRadius.circular(12),
                         border: Border.all(color: AppTheme.border),
                       ),
-                      child: Row(
+                      child: const Row(
                         children: [
-                          const Icon(Icons.storefront_rounded, color: AppTheme.primary, size: 18),
-                          const SizedBox(width: 10),
-                          const Expanded(
+                          Icon(Icons.storefront_rounded, color: AppTheme.primary, size: 18),
+                          SizedBox(width: 10),
+                          Expanded(
                             child: Text(
-                              'This is your listing. Buyers can contact you via Chat.',
+                              'Your listing. You can only delete it once any active orders are delivered.',
                               style: TextStyle(color: AppTheme.muted, fontSize: 13),
                             ),
                           ),

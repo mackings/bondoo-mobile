@@ -41,6 +41,10 @@ class ProductRepository {
         }) as Map<String, dynamic>;
   }
 
+  Future<void> updateProductStatus(String id, String status) async {
+    await _api.patch('/products/$id', {'status': status});
+  }
+
   Future<void> deleteProduct(String id) async {
     await _api.delete('/products/$id');
   }
